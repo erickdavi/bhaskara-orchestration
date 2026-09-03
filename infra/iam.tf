@@ -71,6 +71,49 @@ locals {
       }
     ]
 
+    # O status e o unico que enxerga tudo — e o unico sem nenhum verbo de
+    # escrita. Ele consegue espiar a dead-letter (ReceiveMessage) e nunca
+    # esvazia-la: nao tem DeleteMessage. Um painel que apagasse a evidencia ao
+    # ser aberto seria pior que nao ter painel.
+    status = [
+      {
+        Sid      = "LeAsFilas"
+        Effect   = "Allow"
+        Action   = ["sqs:GetQueueAttributes"]
+        Resource = [aws_sqs_queue.orders.arn, aws_sqs_queue.dead_letter.arn]
+      },
+      {
+        Sid      = "EspiaADeadLetter"
+        Effect   = "Allow"
+        Action   = ["sqs:ReceiveMessage"]
+        Resource = aws_sqs_queue.dead_letter.arn
+      },
+      {
+        Sid    = "LeOHistoricoDeUmaExecucao"
+        Effect = "Allow"
+        Action = [
+          "states:ListExecutions",
+          "states:DescribeExecution",
+          "states:GetExecutionHistory",
+        ]
+        Resource = [
+          local.state_machine_arn,
+          "arn:${data.aws_partition.current.partition}:states:${var.aws_region}:${data.aws_caller_identity.current.account_id}:execution:${local.state_machine_name}:*",
+        ]
+      },
+      {
+        Sid      = "LeOsEventosDoFluxo"
+        Effect   = "Allow"
+        Action   = ["logs:FilterLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.state_machine.arn}:*"
+      },
+      {
+        Sid      = "ConsultaOsResultadosDaCarga"
+        Effect   = "Allow"
+        Action   = ["dynamodb:Query", "dynamodb:GetItem"]
+        Resource = [aws_dynamodb_table.results.arn, "${aws_dynamodb_table.results.arn}/index/by_batch"]
+      }
+    ]
   }
 }
 

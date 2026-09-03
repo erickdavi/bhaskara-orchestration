@@ -42,6 +42,7 @@ resource "aws_apigatewayv2_stage" "default" {
 locals {
   routes = {
     submit = "POST /orders"
+    status = "GET /flow"
   }
 }
 

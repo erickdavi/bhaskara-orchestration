@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Bhaskara Orchestration — painel do fluxo</title>
+<!-- Favicon embutido: o bucket e privado e nao serve /favicon.ico, e a
+     requisicao automatica do browser viraria um 403 no console. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%86%92%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<!-- Gerado pelo Terraform com a URL da API. Ausente num clone local, a pagina
+     cai no formulario de configuracao. A CHAVE nunca vem daqui na nuvem: ela e
+     digitada pelo operador e fica so no localStorage do browser. -->
+<script src="config.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Bhaskara Orchestration</h1>
+      <p class="sub">Uma equacao entra pela fila, atravessa cinco funcoes orquestradas pelo Step Functions e sai gravada — ou recusada, com o motivo.</p>
+    </div>
+    <div class="badge" id="mode">—</div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <section class="card" id="config-card">
+    <h2>Configuracao</h2>
+    <div class="row">
+      <label class="field wide">
+        <span>URL da API</span>
+        <input id="api-base" type="url" placeholder="https://xxxx.execute-api.us-east-1.amazonaws.com" autocomplete="off">
+      </label>
+      <label class="field wide">
+        <span>Chave de API <em>terraform output -raw api_key</em></span>
+        <input id="api-key" type="password" placeholder="cole a chave aqui" autocomplete="off">
+      </label>
+      <button class="ghost" id="save-config" type="button">Salvar</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Disparar carga</h2>
+    <div class="row">
+      <label class="field"><span>Equacoes</span><input id="quantity" type="number" min="1" max="2000" value="50"></label>
+      <label class="field"><span>Invalidas %</span><input id="invalid" type="number" min="0" max="100" value="10"></label>
+      <label class="field"><span>Duplicadas %</span><input id="duplicates" type="number" min="0" max="100" value="15"></label>
+      <label class="field"><span>Com falha injetada %</span><input id="chaos" type="number" min="0" max="100" value="15"></label>
+      <button id="fire" type="button">Disparar</button>
+      <span class="hint" id="batch">nenhuma carga nesta sessao</span>
+    </div>
+  </section>
+
+  <div class="kpis">
+    <div class="kpi"><span class="kpi-label">Na fila</span><span class="kpi-value" id="kpi-queued">—</span><span class="kpi-note">orders</span></div>
+    <div class="kpi"><span class="kpi-label">Em execucao</span><span class="kpi-value" id="kpi-running">—</span><span class="kpi-note">state machine</span></div>
+    <div class="kpi"><span class="kpi-label">Concluidas</span><span class="kpi-value ok" id="kpi-succeeded">—</span><span class="kpi-note">resultado gravado</span></div>
+    <div class="kpi"><span class="kpi-label">Recusadas</span><span class="kpi-value bad" id="kpi-failed">—</span><span class="kpi-note">dead-letter</span></div>
+    <div class="kpi"><span class="kpi-label">Falhas em tasks</span><span class="kpi-value warn" id="kpi-retried">—</span><span class="kpi-note">inclui as recuperadas por retry</span></div>
+  </div>
+
+  <section class="card">
+    <h2>O fluxo, ao vivo</h2>
+    <p class="sub">Cada no mostra quantas execucoes entraram nele. Verde-agua: houve trafego desde a leitura anterior. Ambar: o estado registrou falha — quase sempre recuperada pelo retry. Vermelho: terminou na dead-letter.</p>
+    <div class="diagram">
+      <svg viewBox="0 0 980 430" id="flow" role="img" aria-label="Diagrama do fluxo de execucao">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L9,5 L0,9 z" class="arrowhead"/>
+          </marker>
+        </defs>
+
+        <g class="edges">
+          <path d="M150,60 L196,60" marker-end="url(#arrow)"/>
+          <path d="M330,60 L376,60" marker-end="url(#arrow)"/>
+          <path d="M436,74 L436,120" marker-end="url(#arrow)"/>
+          <path d="M120,150 L166,150" marker-end="url(#arrow)"/>
+          <path d="M286,150 L320,150" marker-end="url(#arrow)"/>
+          <path d="M376,150 L404,150"/>
+          <path d="M404,150 L404,110 L446,110" marker-end="url(#arrow)"/>
+          <path d="M404,150 L404,196 L446,196" marker-end="url(#arrow)"/>
+          <path d="M404,150 L404,246 L446,246" marker-end="url(#arrow)"/>
+          <path d="M646,110 L678,110 L678,150"/>
+          <path d="M646,196 L678,196 L678,150"/>
+          <path d="M646,246 L678,246 L678,150"/>
+          <path d="M678,150 L716,150" marker-end="url(#arrow)"/>
+          <path d="M786,178 L786,236" marker-end="url(#arrow)"/>
+          <path class="edge-bad" d="M226,178 L226,330 M436,296 L436,330 M786,178 L786,300 L546,300 L546,330"/>
+          <path class="edge-bad" d="M226,330 L500,330" marker-end="url(#arrow)"/>
+        </g>
+
+        <g class="nodes">
+          <g class="node queue" data-node="queue-orders" transform="translate(20,38)">
+            <rect width="130" height="44" rx="5"/>
+            <text class="node-name" x="65" y="20">SQS orders</text>
+            <text class="node-count" x="65" y="36" data-count="queue-orders">0</text>
+          </g>
+          <g class="node fn" data-node="dispatcher" transform="translate(196,38)">
+            <rect width="134" height="44" rx="5"/>
+            <text class="node-name" x="67" y="20">dispatcher</text>
+            <text class="node-count" x="67" y="36" data-count="dispatcher">—</text>
+          </g>
+          <g class="node ghost-node" transform="translate(376,38)">
+            <rect width="120" height="44" rx="5"/>
+            <text class="node-name" x="60" y="20">StartExecution</text>
+            <text class="node-sub" x="60" y="36">nome = chave</text>
+          </g>
+
+          <g class="node state" data-node="Validate" transform="translate(166,128)">
+            <rect width="120" height="44" rx="5"/>
+            <text class="node-name" x="60" y="20">Validate</text>
+            <text class="node-count" x="60" y="36" data-count="Validate">0</text>
+          </g>
+          <g class="node state" data-node="Delta" transform="translate(320,128)">
+            <rect width="56" height="44" rx="5"/>
+            <text class="node-name" x="28" y="20">Delta</text>
+            <text class="node-count" x="28" y="36" data-count="Delta">0</text>
+          </g>
+
+          <g class="node parallel" data-node="RootsInParallel" transform="translate(446,88)">
+            <rect width="200" height="44" rx="5"/>
+            <text class="node-name" x="100" y="19">Parallel · RootX1 + RootX2</text>
+            <text class="node-count" x="100" y="35" data-count="RootsInParallel">0</text>
+          </g>
+          <g class="node state" data-node="RootDouble" transform="translate(446,174)">
+            <rect width="200" height="44" rx="5"/>
+            <text class="node-name" x="100" y="19">RootDouble</text>
+            <text class="node-count" x="100" y="35" data-count="RootDouble">0</text>
+          </g>
+          <g class="node pass" data-node="NoRealRoots" transform="translate(446,224)">
+            <rect width="200" height="44" rx="5"/>
+            <text class="node-name" x="100" y="19">NoRealRoots</text>
+            <text class="node-count" x="100" y="35" data-count="NoRealRoots">0</text>
+          </g>
+
+          <g class="node state" data-node="Persist" transform="translate(716,128)">
+            <rect width="140" height="44" rx="5"/>
+            <text class="node-name" x="70" y="20">Persist</text>
+            <text class="node-count" x="70" y="36" data-count="Persist">0</text>
+          </g>
+          <g class="node store" data-node="table" transform="translate(716,236)">
+            <rect width="140" height="44" rx="5"/>
+            <text class="node-name" x="70" y="20">DynamoDB</text>
+            <text class="node-sub" x="70" y="36">resultado + chave</text>
+          </g>
+
+          <g class="node bad" data-node="DeadLetter" transform="translate(500,330)">
+            <rect width="180" height="44" rx="5"/>
+            <text class="node-name" x="90" y="20">SQS dead-letter</text>
+            <text class="node-count" x="90" y="36" data-count="queue-dead-letter">0</text>
+          </g>
+
+          <text class="lane" x="20" y="22">COREOGRAFIA</text>
+          <text class="lane" x="20" y="112">ORQUESTRACAO — STEP FUNCTIONS</text>
+          <text class="lane bad-lane" x="20" y="324">CAMINHO DE ERRO — Catch(States.ALL)</text>
+          <text class="edge-label" x="410" y="104">&#916; &gt; 0</text>
+          <text class="edge-label" x="410" y="190">&#916; = 0</text>
+          <text class="edge-label" x="410" y="240">&#916; &lt; 0</text>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <div class="split">
+    <section class="card">
+      <h2>Execucoes</h2>
+      <p class="sub">Clique numa execucao para ver o passo a passo. Uma que sofreu retry mostra a tentativa refeita.</p>
+      <ul class="executions" id="executions"><li class="empty">sem execucoes na janela</li></ul>
+    </section>
+
+    <section class="card">
+      <h2>Linha do tempo</h2>
+      <p class="sub" id="timeline-title">nenhuma execucao selecionada</p>
+      <ol class="timeline" id="timeline"><li class="empty">escolha uma execucao ao lado</li></ol>
+    </section>
+  </div>
+
+  <div class="split">
+    <section class="card">
+      <h2>Resultados gravados</h2>
+      <ul class="results" id="results"><li class="empty">nenhum resultado nesta carga</li></ul>
+    </section>
+
+    <section class="card">
+      <h2>Dead-letter</h2>
+      <p class="sub">Espiada sem consumir: o painel nao tem permissao para apagar mensagem.</p>
+      <ul class="rejections" id="rejections"><li class="empty">nada recusado</li></ul>
+    </section>
+  </div>
+
+  <footer>
+    Checkpoint 3 · orquestracao e composicao de servicos · a chave de API fica apenas no localStorage deste browser
+  </footer>
+</div>
+
+<script src="flow.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

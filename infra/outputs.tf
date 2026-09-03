@@ -9,6 +9,11 @@ output "submit_url" {
   value       = "${aws_apigatewayv2_api.this.api_endpoint}/orders"
 }
 
+output "flow_url" {
+  description = "GET /flow — estado do fluxo, consumido pelo painel."
+  value       = "${aws_apigatewayv2_api.this.api_endpoint}/flow"
+}
+
 output "api_base_url" {
   description = "Base da API, para colar no campo de configuracao do painel."
   value       = aws_apigatewayv2_api.this.api_endpoint
@@ -47,4 +52,9 @@ output "state_machine_log_group" {
 output "function_names" {
   description = "As sete funcoes publicadas."
   value       = { for name, function in aws_lambda_function.this : name => function.function_name }
+}
+
+output "dashboard_url" {
+  description = "O painel. Abra, cole a chave de API e dispare uma carga."
+  value       = "https://${aws_cloudfront_distribution.dashboard.domain_name}"
 }

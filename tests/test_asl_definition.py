@@ -179,3 +179,49 @@ def test_todo_placeholder_do_arquivo_e_conhecido():
     conhecidos = {name.strip("${}") for name in runtime.HANDLERS} | set(runtime.LOCAL_SUBSTITUTIONS)
 
     assert runtime.raw_placeholders() <= conhecidos
+
+
+# Estados que de proposito nao viram no no diagrama, e por que.
+SEM_NO_NO_DIAGRAMA = {
+    "ChooseRoots": "o Choice e desenhado como a bifurcacao entre os tres ramos",
+    "RootX1": "aparece dentro do no do Parallel",
+    "RootX2": "aparece dentro do no do Parallel",
+    "Rejected": "estado terminal Fail; o que interessa e a fila de dead-letter",
+    "Done": "estado terminal Succeed; o desfecho aparece nos contadores",
+}
+
+
+def diagram_nodes():
+    """Le a lista de nos do painel direto do JavaScript.
+
+    Um teste que dependesse de uma copia da lista aqui nao pegaria nada: o que
+    se quer verificar e que o **painel** conhece os estados que existem.
+    """
+    import os
+    import re
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "flow.js")
+
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
+
+    declaration = re.search(r"window\.FLOW_NODES\s*=\s*\[(.*?)\]", source, re.S)
+
+    return set(re.findall(r'"([^"]+)"', declaration.group(1)))
+
+
+def test_todo_estado_da_asl_tem_no_no_painel_ou_justificativa(definition):
+    """Renomear um estado no YAML apagaria um no do diagrama em silencio."""
+    nos = diagram_nodes()
+
+    for name, _ in states_of(definition):
+        assert name in nos or name in SEM_NO_NO_DIAGRAMA, (
+            "o estado %s nao aparece no painel e nao esta na lista de excecoes" % name
+        )
+
+
+def test_todo_no_do_painel_existe_na_asl(definition):
+    """O contrario tambem: um no orfao mostraria um contador que nunca sobe."""
+    estados = {name for name, _ in states_of(definition)}
+
+    assert diagram_nodes() <= estados

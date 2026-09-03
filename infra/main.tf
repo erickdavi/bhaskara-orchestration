@@ -105,6 +105,20 @@ locals {
       }
     }
 
+    status = {
+      description = "Responde GET /flow com o estado do fluxo para o painel"
+      files       = ["handlers/status/handler.py", "shared/api_auth.py"]
+      memory      = var.status_memory_size
+      timeout     = var.status_timeout
+      environment = {
+        API_KEY                 = random_password.api_key.result
+        ORDERS_QUEUE_URL        = aws_sqs_queue.orders.url
+        DEAD_LETTER_QUEUE_URL   = aws_sqs_queue.dead_letter.url
+        RESULTS_TABLE           = aws_dynamodb_table.results.name
+        STATE_MACHINE_ARN       = local.state_machine_arn
+        STATE_MACHINE_LOG_GROUP = local.state_machine_log_group
+      }
+    }
   }
 
   # As cinco funcoes que a state machine invoca. O dispatcher e o submit ficam

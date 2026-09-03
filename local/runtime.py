@@ -163,7 +163,22 @@ def bind_doubles(setter=setattr, sqs=None, dynamodb=None):
 
     for module_name, attributes in (
         ("submit", {"_sqs": sqs, "ORDERS_QUEUE_URL": LOCAL_ORDERS_URL, "API_KEY": LOCAL_API_KEY}),
-        ("status", {"_sqs": sqs, "_dynamodb": dynamodb, "API_KEY": LOCAL_API_KEY}),
+        (
+            "status",
+            {
+                "_sqs": sqs,
+                "_dynamodb": dynamodb,
+                "API_KEY": LOCAL_API_KEY,
+                "ORDERS_QUEUE_URL": LOCAL_ORDERS_URL,
+                "DEAD_LETTER_QUEUE_URL": LOCAL_DEAD_LETTER_URL,
+                "RESULTS_TABLE": LOCAL_TABLE,
+                # Vazio de proposito: sem log group, fetch_events devolve lista
+                # vazia em vez de tentar falar com o CloudWatch. Quem alimenta o
+                # agregador localmente e o servidor, com os eventos do
+                # interpretador.
+                "STATE_MACHINE_LOG_GROUP": "",
+            },
+        ),
         ("dispatcher", {"STATE_MACHINE_ARN": LOCAL_STATE_MACHINE_ARN}),
     ):
         module = handler_module(module_name)
