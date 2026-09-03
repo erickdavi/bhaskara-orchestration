@@ -1,0 +1,48 @@
+# Caminho avancado da execucao local: o fluxo rodando contra servicos AWS
+# emulados, em vez dos dubles em memoria.
+#
+#   docker compose up -d
+#   ./scripts/local-aws.sh up
+#   ./scripts/local-aws.sh demo 30
+#   docker compose down -v
+#
+# Isto e OPCIONAL. O caminho padrao — ./run.sh demo e ./run.sh web — nao precisa
+# de Docker e roda em qualquer maquina com Python 3.9+. Este aqui existe para
+# confirmar que o interpretador em local/engine.py nao diverge de um motor de
+# Step Functions de verdade: mesma definicao, mesmos handlers, outro executor.
+
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: bhaskara-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: sqs,lambda,dynamodb,stepfunctions,logs,iam
+      DEBUG: "0"
+      # Cada funcao roda em um container proprio, criado pelo LocalStack. Sem
+      # dizer em qual rede coloca-lo, esse container nasce na bridge padrao e
+      # nao consegue voltar a falar com o LocalStack — a invocacao morre em
+      # "timed out during startup", sem erro no codigo da funcao.
+      LAMBDA_DOCKER_NETWORK: bhaskara-localstack
+      # 20 s (o padrao) nao basta em WSL2, onde o disco e mais lento.
+      LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT: "180"
+      # Mantem o container de cada funcao vivo por uma hora. Sem isso, cada
+      # lote entregue pelo event source mapping tenta subir um container novo,
+      # e em WSL2 varios ao mesmo tempo estouram o timeout de startup.
+      LAMBDA_KEEPALIVE_MS: "3600000"
+    volumes:
+      # A Lambda do LocalStack roda cada funcao em um container proprio, e para
+      # isso precisa falar com o Docker da maquina.
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+# Rede com nome fixo: o LAMBDA_DOCKER_NETWORK acima precisa saber o nome, e o
+# padrao do compose depende do nome do diretorio de quem clonou.
+networks:
+  default:
+    name: bhaskara-localstack
