@@ -46,9 +46,29 @@ States:
       - ErrorEquals:
           - InvalidEquation
         MaxAttempts: 0
+
+      # Throttling tem retrier proprio, e mais paciente que o generico.
+      #
+      # Isto nao e teoria: no primeiro deploy, 6 das 7 mensagens que foram
+      # parar na dead-letter eram equacoes perfeitamente validas que esgotaram
+      # 3 tentativas em 1s, 2s e 4s enquanto a conta estava saturada. A conta
+      # tem 10 execucoes Lambda concorrentes no total, e cada execucao desta
+      # state machine invoca ate cinco funcoes — dezenas de execucoes ao mesmo
+      # tempo pedem mais concorrencia do que existe.
+      #
+      # Esperar mais e a resposta certa: a fila nao tem pressa, e uma equacao
+      # recusada por falta de concorrencia e um resultado errado. Com 6
+      # tentativas a 2s, 4s, 8s, 16s, 32s e 64s, a janela de espera passa de 7
+      # segundos para dois minutos.
+      - ErrorEquals:
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 6
+        BackoffRate: 2
+        JitterStrategy: FULL
+
       - ErrorEquals:
           - TransientFailure
-          - Lambda.TooManyRequestsException
           - Lambda.ServiceException
           - Lambda.AWSLambdaException
           - Lambda.SdkClientException

@@ -225,3 +225,29 @@ def test_todo_no_do_painel_existe_na_asl(definition):
     estados = {name for name, _ in states_of(definition)}
 
     assert diagram_nodes() <= estados
+
+
+def test_throttling_tem_retrier_mais_paciente_que_o_generico(definition):
+    """Throttling nao e defeito da mensagem: e falta de concorrencia.
+
+    Com o retrier generico (3 tentativas em ate 7 segundos), uma equacao valida
+    ia para a dead-letter so porque a conta estava saturada — foi o que
+    aconteceu no primeiro deploy. A fila nao tem pressa; esperar mais e a
+    resposta certa.
+    """
+    for name, state in states_of(definition):
+        retriers = state.get("Retry") or []
+
+        throttling = [r for r in retriers if "Lambda.TooManyRequestsException" in r["ErrorEquals"]]
+
+        if not throttling:
+            continue
+
+        generico = [r for r in retriers if "States.TaskFailed" in r["ErrorEquals"]]
+
+        assert len(throttling) == 1, name
+        assert throttling[0]["MaxAttempts"] >= 6, name
+
+        if generico:
+            assert throttling[0]["MaxAttempts"] > generico[0]["MaxAttempts"], name
+            assert retriers.index(throttling[0]) < retriers.index(generico[0]), name

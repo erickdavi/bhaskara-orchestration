@@ -65,9 +65,18 @@ variable "submit_max_quantity" {
 }
 
 variable "dispatcher_batch_size" {
-  description = "Quantas mensagens o event source mapping entrega por invocacao do dispatcher."
+  description = <<-EOT
+  Quantas mensagens o event source mapping entrega por invocacao do dispatcher.
+
+  3, e nao os 10 do maximo: cada mensagem do lote vira uma execucao, e cada
+  execucao invoca ate cinco funcoes. Com lote de 10 e duas invocacoes
+  simultaneas do dispatcher, ate 20 execucoes comecam ao mesmo tempo e pedem
+  muito mais que as 10 execucoes concorrentes que a conta tem. O primeiro
+  deploy mostrou o resultado: equacoes validas na dead-letter por
+  Lambda.TooManyRequestsException.
+  EOT
   type        = number
-  default     = 10
+  default     = 3
 }
 
 variable "dispatcher_max_concurrency" {

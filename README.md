@@ -678,6 +678,13 @@ dedicado com política restrita. Fica registrado como débito, não escondido.
 leitura anterior", com 2 segundos de granularidade. Um WebSocket daria tempo
 real e uma API Gateway inteira a mais para manter.
 
+**A linha do tempo tem a latência do CloudWatch.** Os eventos do fluxo são
+lidos do log da state machine, e a ingestão leva alguns segundos. Durante uma
+carga em andamento é normal ver uma execução com um passo faltando ou ainda
+marcada como em execução depois de ter terminado; o poll seguinte completa. O
+histórico oficial (`?execution=<arn>`) não tem essa defasagem, e é o que o
+detalhe de uma execução usa.
+
 ## Decisões de arquitetura
 
 Cada ciclo de desenvolvimento tem uma nota em [`docs/`](docs/), com o que foi
