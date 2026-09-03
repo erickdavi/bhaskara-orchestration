@@ -27,8 +27,16 @@ class TransientFailure(Exception):
     """
 
 
-def maybe_fail(event, state_name):
-    """Levanta TransientFailure se a carga pediu caos neste estado."""
+def maybe_fail(event, default_name=None):
+    """Levanta TransientFailure se a carga pediu caos neste estado.
+
+    O nome do estado vem do proprio fluxo: toda Task recebe
+    `state.$: "$$.State.Name"` nos Parameters. Assim a carga pode pedir caos em
+    "RootX1" sem que o handler — que atende tres estados diferentes — precise
+    saber em qual deles esta rodando. `default_name` cobre a chamada direta,
+    fora da state machine.
+    """
+    state_name = event.get("state") or default_name
     meta = event.get("meta") or {}
     chaos = meta.get("chaos") or {}
 

@@ -31,8 +31,11 @@ States:
     Parameters:
       equation.$: "$.equation"
       meta.$: "$.meta"
-      # $$.State.RetryCount e o que torna a falha injetada deterministica: a
-      # funcao sabe em qual tentativa esta sem precisar guardar estado.
+      # O par abaixo vai em toda Task. $$.State.Name diz a funcao em qual
+      # estado ela esta rodando — o mesmo handler atende tres estados no caso
+      # das raizes — e $$.State.RetryCount torna a falha injetada
+      # deterministica: a funcao sabe em qual tentativa esta sem guardar estado.
+      state.$: "$$.State.Name"
       retry_count.$: "$$.State.RetryCount"
     ResultPath: "$.validated"
     Retry: &retry
@@ -64,9 +67,107 @@ States:
     Parameters:
       validated.$: "$.validated"
       meta.$: "$.meta"
+      state.$: "$$.State.Name"
       retry_count.$: "$$.State.RetryCount"
     ResultPath: "$.delta"
     Retry: *retry
+    Next: ChooseRoots
+
+  # ------------------------------------------------------------- ChooseRoots
+  #
+  # O roteamento compara a palavra que o estado Delta produziu, e nao o numero.
+  # Um NumericGreaterThan aqui funcionaria, mas espalharia a regra "delta zero
+  # significa raiz dupla" entre o codigo e a definicao do fluxo. Do jeito
+  # abaixo, a state machine so roteia — quem sabe matematica e o codigo, e o
+  # YAML fica legivel para quem nunca viu Bhaskara.
+  ChooseRoots:
+    Type: Choice
+    Comment: Um caminho para cada sinal do discriminante.
+    Choices:
+      - Variable: "$.delta.sign"
+        StringEquals: positive
+        Next: RootsInParallel
+      - Variable: "$.delta.sign"
+        StringEquals: zero
+        Next: RootDouble
+    Default: NoRealRoots
+
+  # -------------------------------------------------------- RootsInParallel
+  #
+  # Delta > 0: duas raizes distintas, cada uma calculada em seu ramo. Ver o
+  # cabecalho de src/handlers/root/handler.py — a divisao e para demonstrar o
+  # Parallel, nao para ganhar tempo.
+  RootsInParallel:
+    Type: Parallel
+    Comment: Calcula x1 e x2 em ramos concorrentes.
+    Branches:
+      - StartAt: RootX1
+        States:
+          RootX1:
+            Type: Task
+            Resource: "${root_arn}"
+            Parameters:
+              label: x1
+              validated.$: "$.validated"
+              delta.$: "$.delta"
+              meta.$: "$.meta"
+              state.$: "$$.State.Name"
+              retry_count.$: "$$.State.RetryCount"
+            Retry: *retry
+            End: true
+      - StartAt: RootX2
+        States:
+          RootX2:
+            Type: Task
+            Resource: "${root_arn}"
+            Parameters:
+              label: x2
+              validated.$: "$.validated"
+              delta.$: "$.delta"
+              meta.$: "$.meta"
+              state.$: "$$.State.Name"
+              retry_count.$: "$$.State.RetryCount"
+            Retry: *retry
+            End: true
+    # A saida de um Parallel e a lista das saidas dos ramos, na ordem em que os
+    # ramos foram declarados. O ResultSelector so lhe da nome, para que os tres
+    # caminhos entreguem a mesma forma ao Persist: { "roots": [...] }.
+    ResultSelector:
+      roots.$: "$"
+    ResultPath: "$.result"
+    Next: Done
+
+  # -------------------------------------------------------------- RootDouble
+  #
+  # Delta = 0: as duas raizes sao o mesmo numero. Abrir um Parallel para
+  # calcular duas vezes o mesmo valor seria desperdicio sem ganho didatico.
+  RootDouble:
+    Type: Task
+    Comment: Raiz dupla, calculada uma vez so.
+    Resource: "${root_arn}"
+    Parameters:
+      label: double
+      validated.$: "$.validated"
+      delta.$: "$.delta"
+      meta.$: "$.meta"
+      state.$: "$$.State.Name"
+      retry_count.$: "$$.State.RetryCount"
+    ResultSelector:
+      roots.$: "States.Array($)"
+    ResultPath: "$.result"
+    Retry: *retry
+    Next: Done
+
+  # ------------------------------------------------------------- NoRealRoots
+  #
+  # Delta < 0: nao ha o que calcular. Um Pass, e nao uma Lambda: invocar uma
+  # funcao para devolver uma lista vazia seria custo e latencia por nada.
+  NoRealRoots:
+    Type: Pass
+    Comment: Sem raizes reais.
+    Result:
+      roots: []
+    ResultPath: "$.result"
     Next: Done
 
   # -------------------------------------------------------------------- Fim

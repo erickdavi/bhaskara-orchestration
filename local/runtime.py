@@ -24,6 +24,14 @@ DEFINITION_PATH = os.path.join(ROOT, "workflow", "bhaskara.asl.yaml")
 # Lambda: o Step Functions publica na fila sozinho.
 SQS_SEND_MESSAGE = "arn:aws:states:::sqs:sendMessage"
 
+# Placeholder do YAML -> diretorio do handler em src/handlers/.
+HANDLERS = {
+    "${validate_arn}": "validate",
+    "${delta_arn}": "delta",
+    "${root_arn}": "root",
+    "${persist_arn}": "persist",
+}
+
 
 class Context:
     """O minimo do context object da Lambda que os handlers consultam."""
@@ -71,22 +79,17 @@ def build_resources(sqs=None):
     def lambda_call(module):
         return lambda payload: module.lambda_handler(payload, context)
 
-    from src.handlers.delta import handler as delta
-    from src.handlers.validate import handler as validate
+    resources = {}
 
-    resources = {
-        "${validate_arn}": lambda_call(validate),
-        "${delta_arn}": lambda_call(delta),
-    }
+    # Um import por vez, e nao um bloco unico: os ciclos seguintes acrescentam
+    # handlers, e um ImportError coletivo esconderia qual deles faltou.
+    for placeholder, module_name in HANDLERS.items():
+        try:
+            module = __import__("src.handlers.%s.handler" % module_name, fromlist=["handler"])
+        except ImportError:
+            continue
 
-    try:
-        from src.handlers.root import handler as root
-        from src.handlers.persist import handler as persist
-    except ImportError:
-        pass
-    else:
-        resources["${root_arn}"] = lambda_call(root)
-        resources["${persist_arn}"] = lambda_call(persist)
+        resources[placeholder] = lambda_call(module)
 
     if sqs is not None:
         resources[SQS_SEND_MESSAGE] = sqs.send_from_workflow

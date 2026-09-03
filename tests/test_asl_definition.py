@@ -103,3 +103,32 @@ def states_of(definition, states=None):
         for branch in state.get("Branches") or []:
             for item in states_of(definition, branch["States"]):
                 yield item
+
+
+def test_toda_task_recebe_nome_do_estado_e_tentativa(definition):
+    """Sem esses dois campos o modo caos nao consegue mirar nem contar.
+
+    `state.$` diz a funcao em qual estado ela roda — o handler de raiz atende
+    tres — e `retry_count.$` e o que torna a falha injetada deterministica.
+    """
+    for name, state in states_of(definition):
+        if state["Type"] != "Task" or not state.get("Resource", "").startswith("${"):
+            continue
+
+        parameters = state.get("Parameters") or {}
+
+        assert parameters.get("state.$") == "$$.State.Name", name
+        assert parameters.get("retry_count.$") == "$$.State.RetryCount", name
+
+
+def test_todo_caminho_do_choice_leva_a_um_resultado(definition):
+    """Os tres ramos precisam entregar a mesma forma ao estado seguinte."""
+    states = definition["States"]
+    choice = states["ChooseRoots"]
+
+    destinos = [c["Next"] for c in choice["Choices"]] + [choice["Default"]]
+
+    assert len(destinos) == 3
+
+    for destino in destinos:
+        assert states[destino].get("ResultPath") == "$.result", destino
