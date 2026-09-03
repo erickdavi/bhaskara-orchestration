@@ -29,6 +29,9 @@ LOCAL_TABLE = "bhaskara-orchestration-local-results"
 LOCAL_DEAD_LETTER_URL = "local://dead-letter"
 LOCAL_ORDERS_URL = "local://orders"
 
+LOCAL_STATE_MACHINE_ARN = "arn:aws:states:us-east-1:000000000000:stateMachine:bhaskara-local"
+LOCAL_API_KEY = "chave-local-de-demonstracao"
+
 LOCAL_SUBSTITUTIONS = {"dead_letter_url": LOCAL_DEAD_LETTER_URL}
 
 # Placeholder do YAML -> diretorio do handler em src/handlers/.
@@ -158,16 +161,51 @@ def bind_doubles(setter=setattr, sqs=None, dynamodb=None):
     setter(persist, "_dynamodb", dynamodb)
     setter(persist, "TABLE_NAME", LOCAL_TABLE)
 
-    for module_name, attribute, value in (
-        ("dispatcher", "_sqs", sqs),
-        ("submit", "_sqs", sqs),
-        ("status", "_sqs", sqs),
+    for module_name, attributes in (
+        ("submit", {"_sqs": sqs, "ORDERS_QUEUE_URL": LOCAL_ORDERS_URL, "API_KEY": LOCAL_API_KEY}),
+        ("status", {"_sqs": sqs, "_dynamodb": dynamodb, "API_KEY": LOCAL_API_KEY}),
+        ("dispatcher", {"STATE_MACHINE_ARN": LOCAL_STATE_MACHINE_ARN}),
     ):
-        try:
-            module = __import__("src.handlers.%s.handler" % module_name, fromlist=["handler"])
-        except ImportError:
+        module = handler_module(module_name)
+
+        if module is None:
             continue
 
-        setter(module, attribute, sqs)
+        for attribute, value in attributes.items():
+            setter(module, attribute, value)
 
     return {"sqs": sqs, "dynamodb": dynamodb}
+
+
+def handler_module(name):
+    try:
+        return __import__("src.handlers.%s.handler" % name, fromlist=["handler"])
+    except ImportError:
+        return None
+
+
+def build_local_stack(setter=setattr, sleeper=None):
+    """Monta o ambiente local inteiro: dubles, interpretador e Step Functions.
+
+    A ordem importa e e a razao de esta funcao existir: o duble do Step
+    Functions precisa do interpretador, o interpretador precisa do duble da
+    SQS (para a integracao direta da dead-letter) e o dispatcher precisa do
+    duble do Step Functions. Montar isso na mao em cada teste seria a receita
+    para dois ambientes locais ligeiramente diferentes.
+    """
+    from local.doubles import StepFunctions
+
+    doubles = bind_doubles(setter)
+
+    engine = build_engine(sqs=doubles["sqs"], sleeper=sleeper)
+    stepfunctions = StepFunctions(engine)
+
+    dispatcher = handler_module("dispatcher")
+
+    if dispatcher is not None:
+        setter(dispatcher, "_stepfunctions", stepfunctions)
+
+    doubles["engine"] = engine
+    doubles["stepfunctions"] = stepfunctions
+
+    return doubles

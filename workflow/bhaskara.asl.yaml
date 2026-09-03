@@ -10,9 +10,10 @@
 # falha se algum estado usar construcao que o simulador nao suporte, e
 # tests/test_workflow_engine.py cobre o interpretador.
 #
-# Os ${...} sao substituidos pelo Terraform no apply. O simulador resolve os
-# mesmos nomes contra os handlers em processo — e por isso que o placeholder
-# vive no arquivo em vez de o ARN ser injetado por outro caminho.
+# Os marcadores $${...} sao substituidos pelo Terraform no apply (o $$ duplo e
+# como o templatefile escapa um cifrao literal — aqui, dentro de um comentario).
+# O simulador resolve os mesmos nomes contra os handlers em processo: e por isso
+# que o marcador vive no arquivo, em vez de o ARN ser injetado por outro caminho.
 
 Comment: >-
   Resolve uma equacao do segundo grau compondo funcoes independentes:

@@ -29,4 +29,4 @@ from local import runtime  # noqa: E402
 @pytest.fixture(autouse=True)
 def aws(monkeypatch):
     """Dubles em memoria no lugar dos clientes boto3, restaurados ao fim."""
-    return runtime.bind_doubles(monkeypatch.setattr)
+    return runtime.build_local_stack(monkeypatch.setattr)

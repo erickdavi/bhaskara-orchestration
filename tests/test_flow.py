@@ -17,7 +17,7 @@ from local import runtime
 @pytest.fixture
 def engine(aws):
     """O fluxo real, com os dubles ja ligados pela fixture autouse."""
-    return runtime.build_engine(sqs=aws["sqs"])
+    return aws["engine"]
 
 
 def run(engine, a, b, c, meta=None):
