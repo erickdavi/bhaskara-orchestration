@@ -101,3 +101,46 @@ def build_engine(sqs=None, definition=None, sleeper=None):
     definition = definition or load_definition()
 
     return Engine(definition, build_resources(sqs), sleeper=sleeper)
+
+
+# Nomes de recurso usados pelos dubles. Na nuvem eles vem de variavel de
+# ambiente; aqui precisam existir e ser estaveis, nada mais.
+LOCAL_TABLE = "bhaskara-orchestration-local-results"
+LOCAL_DEAD_LETTER_URL = "local://dead-letter"
+LOCAL_ORDERS_URL = "local://orders"
+
+
+def bind_doubles(setter=setattr, sqs=None, dynamodb=None):
+    """Liga os handlers a dubles em memoria, no lugar dos clientes boto3.
+
+    `setter` existe para que o pytest possa passar `monkeypatch.setattr` e ter
+    a restauracao automatica no fim do teste, enquanto o simulador passa o
+    `setattr` normal. O mesmo caminho de ligacao serve aos dois — um duble
+    ligado de dois jeitos diferentes seria a maneira mais facil de ter suite
+    verde e demonstracao quebrada.
+
+    Devolve os dubles para que quem chamou possa inspeciona-los.
+    """
+    from local.doubles import SQS, DynamoDB
+
+    sqs = sqs if sqs is not None else SQS()
+    dynamodb = dynamodb if dynamodb is not None else DynamoDB()
+
+    from src.handlers.persist import handler as persist
+
+    setter(persist, "_dynamodb", dynamodb)
+    setter(persist, "TABLE_NAME", LOCAL_TABLE)
+
+    for module_name, attribute, value in (
+        ("dispatcher", "_sqs", sqs),
+        ("submit", "_sqs", sqs),
+        ("status", "_sqs", sqs),
+    ):
+        try:
+            module = __import__("src.handlers.%s.handler" % module_name, fromlist=["handler"])
+        except ImportError:
+            continue
+
+        setter(module, attribute, sqs)
+
+    return {"sqs": sqs, "dynamodb": dynamodb}

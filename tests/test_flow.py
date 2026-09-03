@@ -13,8 +13,9 @@ from local import runtime
 
 
 @pytest.fixture
-def engine():
-    return runtime.build_engine()
+def engine(aws):
+    """O fluxo real, com os dubles ja ligados pela fixture autouse."""
+    return runtime.build_engine(sqs=aws["sqs"])
 
 
 def run(engine, a, b, c, meta=None):
@@ -101,3 +102,25 @@ def test_caos_que_esgota_o_retry_derruba_a_execucao(engine):
     assert execution.status == "FAILED"
     assert execution.error == "TransientFailure"
     assert len(falhas) == 4, "a tentativa original mais os 3 retries"
+
+
+def test_o_resultado_e_gravado_nos_tres_caminhos(engine, aws):
+    for indice, (a, b, c) in enumerate(((1, -5, 6), (1, -4, 4), (1, 0, 5))):
+        run(engine, a, b, c, meta={"idempotency_key": "k%d" % indice, "batch_id": "b1"})
+
+    assert sorted(aws["dynamodb"].items) == ["k0", "k1", "k2"]
+
+
+def test_a_mesma_execucao_repetida_nao_grava_duas_vezes(engine, aws):
+    primeira = run(engine, 1, -5, 6)
+    segunda = run(engine, 1, -5, 6)
+
+    assert primeira.output["persisted"]["duplicate"] is False
+    assert segunda.output["persisted"]["duplicate"] is True
+    assert len(aws["dynamodb"].items) == 1
+
+
+def test_duplicata_nao_derruba_a_execucao(engine):
+    run(engine, 1, -5, 6)
+
+    assert run(engine, 1, -5, 6).status == "SUCCEEDED"

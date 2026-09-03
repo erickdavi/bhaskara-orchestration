@@ -135,7 +135,7 @@ States:
     ResultSelector:
       roots.$: "$"
     ResultPath: "$.result"
-    Next: Done
+    Next: Persist
 
   # -------------------------------------------------------------- RootDouble
   #
@@ -156,7 +156,7 @@ States:
       roots.$: "States.Array($)"
     ResultPath: "$.result"
     Retry: *retry
-    Next: Done
+    Next: Persist
 
   # ------------------------------------------------------------- NoRealRoots
   #
@@ -168,6 +168,26 @@ States:
     Result:
       roots: []
     ResultPath: "$.result"
+    Next: Persist
+
+  # ----------------------------------------------------------------- Persist
+  #
+  # Segunda camada de idempotencia: escrita condicional. Se o item ja existe, o
+  # estado nao falha — "ja estava gravado" e desfecho de sucesso, e trata-lo
+  # como erro mandaria para a dead-letter uma execucao que fez a coisa certa.
+  Persist:
+    Type: Task
+    Comment: Grava o resultado uma unica vez, por chave de idempotencia.
+    Resource: "${persist_arn}"
+    Parameters:
+      validated.$: "$.validated"
+      delta.$: "$.delta"
+      result.$: "$.result"
+      meta.$: "$.meta"
+      state.$: "$$.State.Name"
+      retry_count.$: "$$.State.RetryCount"
+    ResultPath: "$.persisted"
+    Retry: *retry
     Next: Done
 
   # -------------------------------------------------------------------- Fim
