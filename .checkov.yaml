@@ -1,0 +1,87 @@
+# Configuracao do checkov.
+#
+# As politicas abaixo sao puladas de forma consciente. Cada uma tem o motivo
+# escrito — este arquivo existe para que a decisao de nao corrigir seja
+# revisavel, e nao para deixar o relatorio verde.
+#
+# O que NAO esta aqui foi corrigido. O log de acesso do API Gateway, por
+# exemplo, entrou depois da primeira varredura: o endpoint transforma uma
+# requisicao em ate 2.000 execucoes, e throttling sem registro de acesso e um
+# alarme mudo.
+#
+# Revisado em 03/09/2026.
+
+directory:
+  - infra
+
+framework:
+  - terraform
+
+skip-check:
+  # --- Criptografia com chave gerenciada pelo cliente (CMK) -----------------
+  #
+  # Todos estes recursos ja tem criptografia em repouso com chave gerenciada
+  # pela AWS. Uma CMK custa US$ 1/mes por chave mais requisicoes, e o ganho
+  # seria rotacao e politica de acesso proprias — controles que fazem sentido
+  # com dado de cliente, nao com resultado de equacao que expira em 24 horas.
+  - CKV_AWS_158  # CloudWatch Log Group com KMS
+  - CKV_AWS_119  # DynamoDB com KMS
+  - CKV_AWS_145  # S3 com KMS
+  - CKV_AWS_173  # Variaveis de ambiente da Lambda com KMS
+
+  # --- Retencao e recuperacao ----------------------------------------------
+  #
+  # A retencao de 7 dias e escolha de custo: log de laboratorio nao precisa de
+  # um ano. O PITR protegeria uma tabela cujo conteudo tem TTL de 24 horas —
+  # perder tudo custa uma demonstracao de 30 segundos.
+  - CKV_AWS_338  # log group com retencao de 1 ano
+  - CKV_AWS_28   # DynamoDB point-in-time recovery
+  - CKV_AWS_21   # versionamento do bucket
+  - CKV_AWS_144  # replicacao entre regioes
+  - CKV2_AWS_61  # lifecycle no bucket
+  - CKV2_AWS_62  # notificacoes de evento no bucket
+  - CKV_AWS_18   # log de acesso do bucket
+
+  # --- CloudFront -----------------------------------------------------------
+  #
+  # O painel e uma pagina estatica de quatro arquivos, sem entrada de usuario,
+  # sem sessao e sem segredo. O que precisa de protecao e o POST /orders, que
+  # gera custo — e esse tem chave de API, throttling e teto por requisicao. WAF
+  # custa ~US$ 5/mes fixos; certificado proprio exige dominio proprio.
+  - CKV_AWS_68   # WAF
+  - CKV2_AWS_47  # WAF com regra de Log4j
+  - CKV_AWS_86   # log de acesso
+  - CKV_AWS_310  # origin failover
+  - CKV_AWS_374  # geo restriction
+  - CKV_AWS_174  # certificado TLS proprio
+  - CKV2_AWS_42  # certificado SSL customizado
+
+  # --- Lambda ---------------------------------------------------------------
+  #
+  # CKV_AWS_115 e impossivel nesta conta, nao indesejavel: o limite e de 10
+  # execucoes concorrentes no total, e a AWS recusa reservar concorrencia
+  # quando isso deixaria menos de 10 nao reservadas. O controle de vazao ficou
+  # no maximum_concurrency do event source mapping.
+  #
+  # CKV_AWS_116 pede uma DLQ da propria Lambda, que so vale para invocacao
+  # assincrona; aqui o consumo e por event source mapping, e a rede de
+  # seguranca e o redrive_policy da fila orders.
+  #
+  # VPC (117) exigiria NAT ou VPC endpoints para SQS, DynamoDB e Step
+  # Functions — custo e latencia sem ganho, porque nao ha recurso privado a
+  # alcancar. Code signing (272) exige um perfil do AWS Signer. X-Ray (50/284)
+  # nao acrescenta ao que o historico da execucao ja mostra neste fluxo.
+  - CKV_AWS_115  # concorrencia reservada
+  - CKV_AWS_116  # dead letter queue da funcao
+  - CKV_AWS_117  # funcao em VPC
+  - CKV_AWS_272  # code signing
+  - CKV_AWS_50   # X-Ray na Lambda
+  - CKV_AWS_284  # X-Ray na state machine
+
+  # --- API Gateway ----------------------------------------------------------
+  #
+  # O HTTP API nao tem API key nativa (isso e recurso do REST API v1), e um
+  # Lambda authorizer seria mais uma funcao, uma role e um log group para
+  # comparar duas strings. A verificacao acontece dentro de cada handler, com
+  # hmac.compare_digest, antes de ler o corpo e com falha fechada.
+  - CKV_AWS_309  # rota sem authorizer

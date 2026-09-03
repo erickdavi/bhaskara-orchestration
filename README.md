@@ -590,6 +590,40 @@ um gerador de custo para quem o encontrasse. Três camadas:
 2. **Throttling do stage**: 5 rps, burst 10.
 3. **Teto de 2.000** equações por requisição.
 
+### Varredura de segurança
+
+O pipeline de entrega deste projeto prevê scan de imagem de container. Não há
+imagem aqui — as Lambdas são zips de código que usa apenas a biblioteca padrão
+—, então a etapa foi cumprida por controle equivalente: varredura do
+repositório e da infraestrutura.
+
+```bash
+trivy fs --scanners vuln,secret,misconfig .   # dependências, segredos e IaC
+checkov                                       # políticas sobre o Terraform
+```
+
+| Ferramenta | Resultado |
+| --- | --- |
+| `trivy fs` | nenhum segredo, nenhuma vulnerabilidade, nenhuma misconfiguration não justificada |
+| `checkov` | 160 políticas aprovadas, nenhuma reprovada |
+
+> `tfsec` foi incorporado ao Trivy pela Aqua Security; o scanner `misconfig` do
+> `trivy` é o sucessor dele, e é o que roda acima.
+
+A primeira varredura apontou seis itens. Um foi **corrigido**: o stage do API
+Gateway não registrava acesso — e um endpoint que transforma uma requisição em
+até 2.000 execuções, com throttling mas sem log, é um alarme mudo. Os demais
+foram **aceitos com justificativa escrita**, em
+[`.trivyignore`](.trivyignore) e [`.checkov.yaml`](.checkov.yaml): WAF em uma
+página estática de quatro arquivos, CMK para criptografar conteúdo que é
+público por definição, PITR para dado com TTL de 24 horas, versionamento de
+artefato cuja fonte já está no Git.
+
+Um item merece nota, porque não é escolha: `CKV_AWS_115` pede concorrência
+reservada por função, e a AWS **recusa** reservar quando a conta tem limite de
+10 execuções simultâneas. O controle de vazão ficou no `maximum_concurrency`
+do event source mapping.
+
 ## Custos
 
 | Serviço | Consumo de uma carga de 100 equações | Custo |

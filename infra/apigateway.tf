@@ -28,6 +28,17 @@ resource "aws_apigatewayv2_api" "this" {
   }
 }
 
+# Log de acesso do stage.
+#
+# Este endpoint transforma uma requisicao em ate 2.000 execucoes de state
+# machine. Se alguem descobrir a URL e comecar a bater nela, a chave de API vai
+# barrar — mas sem log de acesso nao ha como saber que isso aconteceu, de onde
+# veio, nem quantas vezes. Throttling sem observabilidade e um alarme mudo.
+resource "aws_cloudwatch_log_group" "api" {
+  name              = "/aws/apigateway/${local.name_prefix}"
+  retention_in_days = var.log_retention_days
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.this.id
   name        = "$default"
@@ -36,6 +47,24 @@ resource "aws_apigatewayv2_stage" "default" {
   default_route_settings {
     throttling_rate_limit  = var.api_throttling_rate_limit
     throttling_burst_limit = var.api_throttling_burst_limit
+  }
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api.arn
+
+    # Uma linha JSON por requisicao, para que o Logs Insights consulte por
+    # campo. `status` e `ip` sao o que interessa numa investigacao: 403 em
+    # sequencia do mesmo IP e alguem tentando adivinhar a chave.
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      ip             = "$context.identity.sourceIp"
+      requestTime    = "$context.requestTime"
+      routeKey       = "$context.routeKey"
+      status         = "$context.status"
+      responseLength = "$context.responseLength"
+      integrationErr = "$context.integrationErrorMessage"
+      latency        = "$context.responseLatency"
+    })
   }
 }
 

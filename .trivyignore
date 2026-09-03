@@ -1,0 +1,53 @@
+# Achados do trivy aceitos de forma consciente, com o motivo.
+#
+# Este arquivo nao existe para deixar o scan verde: existe para que a decisao
+# de nao corrigir esteja escrita, datada e revisavel. O que nao esta aqui foi
+# corrigido — o log de acesso do API Gateway (AWS-0001), por exemplo, entrou no
+# stage depois da primeira varredura.
+#
+# Revisado em 03/09/2026.
+
+# AWS-0011 — CloudFront sem WAF.
+#
+# O WAF custa cerca de US$ 5 por mes fixos, mais por requisicao, para proteger
+# uma pagina estatica de quatro arquivos que nao aceita entrada, nao tem sessao
+# e nao guarda segredo nenhum. O que de fato precisa de protecao neste projeto
+# e o POST /orders, que gera custo — e esse esta atras de chave de API
+# comparada com hmac.compare_digest, throttling de 5 rps e teto de 2.000
+# equacoes por requisicao. Colocar WAF na vitrine e deixar o cofre com a mesma
+# fechadura seria gastar no lugar errado.
+AWS-0011
+
+# AWS-0132 — bucket do painel sem chave gerenciada pelo cliente (CMK).
+#
+# O conteudo do bucket e servido publicamente pelo CloudFront: sao os arquivos
+# da pagina. Criptografar com CMK (US$ 1/mes por chave, mais por requisicao)
+# um conteudo que qualquer pessoa pode baixar pela URL nao acrescenta
+# confidencialidade — acrescenta custo e uma chave para administrar. O SSE-S3
+# (AES256) esta ativo e cobre criptografia em repouso.
+AWS-0132
+
+# AWS-0010 — CloudFront sem log de acesso.
+#
+# O log padrao do CloudFront exige um bucket de destino com ACL habilitada, o
+# que conflita com o BucketOwnerEnforced usado aqui, e o formato novo (v2) pede
+# uma configuracao de entrega a parte. Para uma pagina estatica sem entrada de
+# usuario, o retorno nao paga a complexidade. O acesso que importa — quem chama
+# a API — passou a ser registrado no stage do API Gateway.
+AWS-0010
+
+# AWS-0090 — bucket do painel sem versionamento.
+#
+# Os cinco objetos do bucket sao regenerados a cada `terraform apply` a partir
+# de web/, que esta versionado no Git. Versionar no S3 guardaria copias de um
+# artefato cuja fonte ja tem historico, e brigaria com o force_destroy que faz
+# o `terraform destroy` sair limpo.
+AWS-0090
+
+# AWS-0024 — DynamoDB sem point-in-time recovery.
+#
+# A tabela guarda resultado de demonstracao com TTL de 24 horas: o dado se
+# apaga sozinho por design. PITR e cobrado por GB-mes para proteger dado que
+# nao deveria existir amanha. Perder a tabela inteira custa uma nova
+# demonstracao de 30 segundos.
+AWS-0024
