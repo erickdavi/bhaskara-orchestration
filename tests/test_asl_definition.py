@@ -132,3 +132,50 @@ def test_todo_caminho_do_choice_leva_a_um_resultado(definition):
 
     for destino in destinos:
         assert states[destino].get("ResultPath") == "$.result", destino
+
+
+def test_toda_task_tem_catch_ou_esta_dentro_de_um_parallel_que_tem(definition):
+    """Nenhuma Task pode falhar sem que a mensagem chegue a dead-letter.
+
+    Dentro de um Parallel a Task nao pode ter o proprio Catch: em ASL, o Next
+    de um estado so aponta para estados do mesmo nivel, e DeadLetter e de fora.
+    A falha do ramo falha o Parallel, e o Catch vive la.
+    """
+    topo = definition["States"]
+
+    for name, state in topo.items():
+        if state["Type"] in ("Task", "Parallel") and name != "DeadLetter":
+            assert state.get("Catch"), "%s sem Catch" % name
+
+    for name, state in topo.items():
+        for branch in state.get("Branches") or []:
+            assert state.get("Catch"), "ramo de %s sem Catch no Parallel" % name
+
+
+def test_todo_catch_leva_a_dead_letter(definition):
+    for name, state in states_of(definition):
+        for rule in state.get("Catch") or []:
+            assert rule["Next"] == "DeadLetter", name
+            assert rule["ResultPath"] == "$.error", name
+
+
+def test_a_dead_letter_publica_direto_na_sqs(definition):
+    """Sem Lambda no caminho de erro: menos concorrencia e menos a falhar."""
+    dead_letter = definition["States"]["DeadLetter"]
+
+    assert dead_letter["Resource"] == "arn:aws:states:::sqs:sendMessage"
+    assert dead_letter["Parameters"]["MessageBody"]["source"] == "workflow"
+    assert dead_letter["Parameters"]["MessageAttributes"]["RejectionReason"]["StringValue.$"] == "$.error.Error"
+
+
+def test_a_recusa_termina_a_execucao_como_falha(definition):
+    """Terminar em Succeed esconderia a recusa numa lista de sucessos."""
+    assert definition["States"]["DeadLetter"]["Next"] == "Rejected"
+    assert definition["States"]["Rejected"]["Type"] == "Fail"
+
+
+def test_todo_placeholder_do_arquivo_e_conhecido():
+    """Placeholder com nome errado viraria texto vazio no apply."""
+    conhecidos = {name.strip("${}") for name in runtime.HANDLERS} | set(runtime.LOCAL_SUBSTITUTIONS)
+
+    assert runtime.raw_placeholders() <= conhecidos

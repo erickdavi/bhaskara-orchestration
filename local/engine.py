@@ -417,7 +417,19 @@ class Engine:
 
         for index, branch in enumerate(state["Branches"]):
             branch_context = dict(context)
-            results.append(self._run(branch["States"], branch["StartAt"], payload, execution, branch_context))
+
+            try:
+                results.append(
+                    self._run(branch["States"], branch["StartAt"], payload, execution, branch_context)
+                )
+            except ExecutionFailed as failure:
+                # A falha de um ramo falha o Parallel inteiro, com o erro do
+                # ramo — e e o Retry/Catch do Parallel que decide o que fazer.
+                # Sem esta conversao o erro subiria direto para a execucao e o
+                # Catch do Parallel nunca agiria: em ASL, o Next de um estado
+                # so aponta para o mesmo nivel, entao o ramo nao pode capturar
+                # sozinho.
+                raise TaskFailure(failure.error, failure.cause) from None
 
         if "ResultSelector" in state:
             results = apply_payload(state["ResultSelector"], results, context)

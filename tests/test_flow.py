@@ -7,6 +7,8 @@ e que os tres caminhos entregam a **mesma forma** de resultado ao estado
 seguinte.
 """
 
+import json
+
 import pytest
 
 from local import runtime
@@ -70,14 +72,23 @@ def test_o_contexto_da_entrada_sobrevive_ate_o_fim(engine):
     assert execution.output["delta"] == {"value": 1, "sign": "positive"}
 
 
-def test_equacao_invalida_derruba_a_execucao_sem_retry(engine):
+def test_equacao_invalida_vai_para_a_dead_letter_sem_retry(engine, aws):
     execution = run(engine, 0, 1, 1)
 
     tentativas = [e for e in execution.events if e["type"] == "TaskFailed"]
+    recusadas = aws["sqs"].queue(runtime.LOCAL_DEAD_LETTER_URL).messages
 
     assert execution.status == "FAILED"
-    assert execution.error == "InvalidEquation"
-    assert len(tentativas) == 1
+    assert execution.error == "EquationNotProcessed"
+    assert len(tentativas) == 1, "erro permanente nao e reentregue"
+    assert len(recusadas) == 1
+
+    corpo = json.loads(recusadas[0]["body"])
+
+    assert corpo["source"] == "workflow"
+    assert corpo["error"]["Error"] == "InvalidEquation"
+    assert "nao pode ser zero" in corpo["error"]["Cause"]
+    assert corpo["equation"] == {"a": 0, "b": 1, "c": 1}
 
 
 def test_caos_em_um_ramo_do_parallel_e_recuperado_pelo_retry(engine):
@@ -92,16 +103,59 @@ def test_caos_em_um_ramo_do_parallel_e_recuperado_pelo_retry(engine):
     assert execution.output["result"]["roots"][1]["value"] == 2.0
 
 
-def test_caos_que_esgota_o_retry_derruba_a_execucao(engine):
+def test_caos_que_esgota_o_retry_vai_para_a_dead_letter(engine, aws):
     meta = {"idempotency_key": "k1", "chaos": {"state": "Delta", "fails": 9}}
 
     execution = run(engine, 1, -5, 6, meta=meta)
 
     falhas = [e for e in execution.events if e["type"] == "TaskFailed"]
+    recusadas = aws["sqs"].queue(runtime.LOCAL_DEAD_LETTER_URL).messages
 
     assert execution.status == "FAILED"
-    assert execution.error == "TransientFailure"
     assert len(falhas) == 4, "a tentativa original mais os 3 retries"
+    assert json.loads(recusadas[0]["body"])["error"]["Error"] == "TransientFailure"
+
+
+def test_falha_dentro_de_um_ramo_do_parallel_e_capturada_pelo_parallel(engine, aws):
+    """Em ASL, o Next de um estado so aponta para o mesmo nivel.
+
+    Por isso o Catch fica no Parallel: a falha do ramo falha o Parallel, e e
+    dali que o fluxo alcanca a DeadLetter.
+    """
+    meta = {"idempotency_key": "k1", "chaos": {"state": "RootX2", "fails": 9}}
+
+    execution = run(engine, 1, -5, 6, meta=meta)
+
+    assert execution.status == "FAILED"
+    assert execution.error == "EquationNotProcessed"
+    assert len(aws["sqs"].queue(runtime.LOCAL_DEAD_LETTER_URL).messages) == 1
+
+
+def test_recusa_nao_grava_resultado(engine, aws):
+    run(engine, 0, 1, 1)
+
+    assert aws["dynamodb"].items == {}
+
+
+def test_motivo_vai_tambem_como_atributo_da_mensagem(engine, aws):
+    """A DLQ nativa da SQS move o payload sem dizer por que.
+
+    Um operador olhando a fila precisa ver o motivo sem abrir cada corpo.
+    """
+    run(engine, 0, 1, 1)
+
+    mensagem = aws["sqs"].queue(runtime.LOCAL_DEAD_LETTER_URL).messages[0]
+
+    assert mensagem["messageAttributes"]["RejectionReason"] == {
+        "DataType": "String",
+        "StringValue": "InvalidEquation",
+    }
+
+
+def test_execucao_bem_sucedida_nao_publica_na_dead_letter(engine, aws):
+    run(engine, 1, -5, 6)
+
+    assert aws["sqs"].queue(runtime.LOCAL_DEAD_LETTER_URL).messages == []
 
 
 def test_o_resultado_e_gravado_nos_tres_caminhos(engine, aws):

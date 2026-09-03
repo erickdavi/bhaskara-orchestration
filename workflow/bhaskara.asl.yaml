@@ -57,6 +57,14 @@ States:
         MaxAttempts: 3
         BackoffRate: 2
         JitterStrategy: FULL
+    Catch: &catch
+      # Depois de esgotado o Retry, qualquer erro leva ao mesmo lugar. O
+      # ResultPath preserva a entrada e anexa { Error, Cause } em $.error —
+      # e o que a mensagem da dead-letter carrega como motivo.
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: "$.error"
+        Next: DeadLetter
     Next: Delta
 
   # ------------------------------------------------------------------- Delta
@@ -71,6 +79,7 @@ States:
       retry_count.$: "$$.State.RetryCount"
     ResultPath: "$.delta"
     Retry: *retry
+    Catch: *catch
     Next: ChooseRoots
 
   # ------------------------------------------------------------- ChooseRoots
@@ -135,6 +144,10 @@ States:
     ResultSelector:
       roots.$: "$"
     ResultPath: "$.result"
+    # O Catch fica no Parallel, e nao dentro dos ramos: em ASL, o Next de um
+    # estado so pode apontar para estados do mesmo nivel, e DeadLetter e de
+    # fora. A falha de um ramo falha o Parallel, que entao e capturado aqui.
+    Catch: *catch
     Next: Persist
 
   # -------------------------------------------------------------- RootDouble
@@ -156,6 +169,7 @@ States:
       roots.$: "States.Array($)"
     ResultPath: "$.result"
     Retry: *retry
+    Catch: *catch
     Next: Persist
 
   # ------------------------------------------------------------- NoRealRoots
@@ -188,7 +202,58 @@ States:
       retry_count.$: "$$.State.RetryCount"
     ResultPath: "$.persisted"
     Retry: *retry
+    Catch: *catch
     Next: Done
+
+  # --------------------------------------------------------------- DeadLetter
+  #
+  # Integracao direta com a SQS: nao ha Lambda neste caminho. Sao duas razoes.
+  #
+  # A conta tem 10 execucoes concorrentes no total, compartilhadas com os
+  # checkpoints anteriores — uma funcao a menos no caminho de erro e
+  # concorrencia preservada para o caminho feliz, justamente quando as coisas
+  # ja estao indo mal.
+  #
+  # E o caminho de erro precisa ser o mais simples possivel: uma funcao que
+  # falhasse ao registrar a falha transformaria um problema visivel em uma
+  # mensagem perdida.
+  DeadLetter:
+    Type: Task
+    Comment: Publica a mensagem recusada com o motivo anexado.
+    Resource: "arn:aws:states:::sqs:sendMessage"
+    Parameters:
+      QueueUrl: "${dead_letter_url}"
+      MessageBody:
+        # `source` distingue esta mensagem das que chegam pela DLQ nativa da
+        # fila orders, quando e o proprio dispatcher que falha. As duas caem
+        # na mesma fila, e o painel precisa saber de onde vieram.
+        source: workflow
+        equation.$: "$.equation"
+        meta.$: "$.meta"
+        error.$: "$.error"
+        execution.$: "$$.Execution.Name"
+      MessageAttributes:
+        # O motivo tambem como atributo: a DLQ nativa da SQS move o payload
+        # original sem dizer por que, e um operador olhando a fila precisa ver
+        # o motivo sem abrir o corpo de cada mensagem.
+        RejectionReason:
+          DataType: String
+          StringValue.$: "$.error.Error"
+    ResultPath: "$.dead_letter"
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 2
+        MaxAttempts: 3
+        BackoffRate: 2
+    Next: Rejected
+
+  # Falhar de proposito no fim: a execucao aparece como FAILED no console e no
+  # painel. Terminar em Succeed esconderia a recusa em uma lista de sucessos.
+  Rejected:
+    Type: Fail
+    Error: EquationNotProcessed
+    Cause: A equacao foi enviada para a fila dead-letter com o motivo anexado.
 
   # -------------------------------------------------------------------- Fim
   Done:

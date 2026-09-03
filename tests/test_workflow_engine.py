@@ -387,3 +387,27 @@ def test_recurso_sem_binding_e_recusado():
 
     with pytest.raises(Unsupported):
         engine(states).start({})
+
+
+def test_falha_de_ramo_e_capturada_pelo_catch_do_parallel():
+    """Semantica do Step Functions: o erro do ramo vira erro do Parallel."""
+    states = {
+        "A": {
+            "Type": "Parallel",
+            "Branches": [
+                {"StartAt": "X", "States": {"X": {"Type": "Task", "Resource": "${f}", "End": True}}},
+            ],
+            "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Recusa"}],
+            "End": True,
+        },
+        "Recusa": {"Type": "Pass", "Result": "dlq", "ResultPath": "$.destino", "End": True},
+    }
+
+    def falha(payload):
+        raise RuntimeError("ramo quebrou")
+
+    execution = engine(states, resources={"${f}": falha}).start({})
+
+    assert execution.status == "SUCCEEDED"
+    assert execution.output["destino"] == "dlq"
+    assert execution.output["error"]["Error"] == "RuntimeError"

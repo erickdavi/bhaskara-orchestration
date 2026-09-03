@@ -24,6 +24,13 @@ DEFINITION_PATH = os.path.join(ROOT, "workflow", "bhaskara.asl.yaml")
 # Lambda: o Step Functions publica na fila sozinho.
 SQS_SEND_MESSAGE = "arn:aws:states:::sqs:sendMessage"
 
+# Recursos locais, no lugar dos ARNs e URLs que o Terraform injeta no apply.
+LOCAL_TABLE = "bhaskara-orchestration-local-results"
+LOCAL_DEAD_LETTER_URL = "local://dead-letter"
+LOCAL_ORDERS_URL = "local://orders"
+
+LOCAL_SUBSTITUTIONS = {"dead_letter_url": LOCAL_DEAD_LETTER_URL}
+
 # Placeholder do YAML -> diretorio do handler em src/handlers/.
 HANDLERS = {
     "${validate_arn}": "validate",
@@ -44,9 +51,36 @@ class Context:
         return 30000
 
 
-def load_definition(path=DEFINITION_PATH):
+def load_definition(path=DEFINITION_PATH, substitutions=None):
+    """Le o YAML aplicando as mesmas substituicoes que o Terraform faria.
+
+    Na nuvem, `templatefile` troca cada ${...} pelo ARN ou URL de verdade. Aqui
+    so os que **nao** sao Resource precisam de valor — a fila de dead-letter,
+    por exemplo, e um parametro da integracao direta com a SQS. Os placeholders
+    de Resource ficam como estao e sao resolvidos por `build_resources()`.
+    """
+    substitutions = LOCAL_SUBSTITUTIONS if substitutions is None else substitutions
+
     with open(path, encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+        text = handle.read()
+
+    for name, value in substitutions.items():
+        text = text.replace("${%s}" % name, value)
+
+    return yaml.safe_load(text)
+
+
+def raw_placeholders(path=DEFINITION_PATH):
+    """Todo ${...} escrito no arquivo, substituido ou nao.
+
+    Um placeholder com nome errado seria trocado por texto vazio pelo Terraform
+    e so apareceria como erro em tempo de execucao, na nuvem. O teste que usa
+    esta funcao pega isso no clone limpo.
+    """
+    import re
+
+    with open(path, encoding="utf-8") as handle:
+        return set(re.findall(r"\$\{([a-z_]+)\}", handle.read()))
 
 
 def placeholders(definition):
@@ -101,13 +135,6 @@ def build_engine(sqs=None, definition=None, sleeper=None):
     definition = definition or load_definition()
 
     return Engine(definition, build_resources(sqs), sleeper=sleeper)
-
-
-# Nomes de recurso usados pelos dubles. Na nuvem eles vem de variavel de
-# ambiente; aqui precisam existir e ser estaveis, nada mais.
-LOCAL_TABLE = "bhaskara-orchestration-local-results"
-LOCAL_DEAD_LETTER_URL = "local://dead-letter"
-LOCAL_ORDERS_URL = "local://orders"
 
 
 def bind_doubles(setter=setattr, sqs=None, dynamodb=None):
