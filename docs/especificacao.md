@@ -1,7 +1,10 @@
 # Especificação — Checkpoint 3: Orquestração e Composição de Serviços
 
 **Projeto:** `bhaskara-orchestration` · **Provedor:** AWS · **Região:** `us-east-1`
-**Conta:** <numero-da-conta> · **Status:** especificação para aprovação (nenhum código escrito ainda)
+**Status:** especificação aprovada em 03/09/2026 — implementada nos sete ciclos
+descritos em `docs/cycle-01.md` … `docs/cycle-07.md`. O que mudou durante a
+implementação está registrado nas notas de cada ciclo; este documento é o plano
+original, mantido como está para que a comparação seja possível.
 
 Terceiro repositório da família, **independente** dos anteriores:
 
