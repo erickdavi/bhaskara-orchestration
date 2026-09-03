@@ -1,0 +1,74 @@
+# State machine do Checkpoint 3 — Amazon States Language em YAML.
+#
+# Este arquivo e a fonte da verdade do fluxo, e nao um subproduto:
+#
+#   - o Terraform o le com templatefile + yamldecode e envia o JSON
+#     equivalente para o Step Functions (infra/statemachine.tf);
+#   - o simulador local o interpreta com o mesmo conteudo (local/engine.py).
+#
+# Por isso ele nao pode divergir do que roda: tests/test_asl_definition.py
+# falha se algum estado usar construcao que o simulador nao suporte, e
+# tests/test_workflow_engine.py cobre o interpretador.
+#
+# Os ${...} sao substituidos pelo Terraform no apply. O simulador resolve os
+# mesmos nomes contra os handlers em processo — e por isso que o placeholder
+# vive no arquivo em vez de o ARN ser injetado por outro caminho.
+
+Comment: >-
+  Resolve uma equacao do segundo grau compondo funcoes independentes:
+  valida os coeficientes, calcula o discriminante, escolhe o caminho conforme o
+  sinal, calcula as raizes e persiste o resultado de forma idempotente.
+
+StartAt: Validate
+
+States:
+
+  # ---------------------------------------------------------------- Validate
+  Validate:
+    Type: Task
+    Comment: Normaliza e valida os coeficientes. Erro aqui e permanente.
+    Resource: "${validate_arn}"
+    Parameters:
+      equation.$: "$.equation"
+      meta.$: "$.meta"
+      # $$.State.RetryCount e o que torna a falha injetada deterministica: a
+      # funcao sabe em qual tentativa esta sem precisar guardar estado.
+      retry_count.$: "$$.State.RetryCount"
+    ResultPath: "$.validated"
+    Retry: &retry
+      # A ordem importa: o Step Functions usa o primeiro retrier que casa com o
+      # erro. InvalidEquation tambem casaria com States.TaskFailed abaixo, e
+      # seria reentregue tres vezes sem qualquer chance de sucesso.
+      - ErrorEquals:
+          - InvalidEquation
+        MaxAttempts: 0
+      - ErrorEquals:
+          - TransientFailure
+          - Lambda.TooManyRequestsException
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - States.TaskFailed
+          - States.Timeout
+        IntervalSeconds: 1
+        MaxAttempts: 3
+        BackoffRate: 2
+        JitterStrategy: FULL
+    Next: Delta
+
+  # ------------------------------------------------------------------- Delta
+  Delta:
+    Type: Task
+    Comment: Calcula b^2 - 4ac e classifica o sinal para o Choice seguinte.
+    Resource: "${delta_arn}"
+    Parameters:
+      validated.$: "$.validated"
+      meta.$: "$.meta"
+      retry_count.$: "$$.State.RetryCount"
+    ResultPath: "$.delta"
+    Retry: *retry
+    Next: Done
+
+  # -------------------------------------------------------------------- Fim
+  Done:
+    Type: Succeed
