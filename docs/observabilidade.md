@@ -208,13 +208,12 @@ nome da etapa continua sendo gravado, de modo que todos os contadores e o
 desenho do fluxo no painel seguem funcionando, e o motivo de uma falha também
 permanece. O que se perde é o texto de detalhe que o painel mostra em cada
 passo, e esse detalhe passa a vir de uma chamada de API que o código já fazia
-para outro caminho. Aqui houve uma correção no próprio projeto, porque uma
-versão anterior deste relatório afirmava que essa alternativa já estava
-implementada quando o código chamava a API mas nunca lia o campo de saída; a
-falta foi corrigida, coberta por quatro testes e verificada contra a AWS com a
-configuração já desligada.
+para outro caminho. A verificação revelou uma falha nesse plano alternativo: a
+chamada existia, mas o código nunca lia o campo de saída dela, de modo que o
+detalhe não voltaria. A leitura foi acrescentada, coberta por quatro testes e
+verificada contra a AWS com a configuração já desligada.
 
-A otimização ficou confirmada e desligada, por uma razão que não é técnica. A
+A otimização ficou confirmada e desligada. A
 infraestrutura do checkpoint anterior continua no ar para correção, e o detalhe
 em cada passo do painel faz parte daquela entrega, de forma que trocar o
 comportamento dela enquanto está sendo avaliada significaria arriscar uma nota
@@ -270,8 +269,8 @@ Uma demonstração completa cabe na camada gratuita da AWS em todos os serviços
 envolvidos, mas as vinte e quatro séries de métricas customizadas são cobradas
 por mês independentemente do uso, o que resulta em até quatro dólares e vinte
 centavos mensais. Isso invalidou uma afirmação do checkpoint anterior, que dizia
-que a infraestrutura não tinha nenhum recurso de custo fixo, e a frase foi
-corrigida no README em vez de ser mantida por inércia.
+que a infraestrutura não tinha nenhum recurso de custo fixo, e o README foi
+corrigido.
 
 Por fim, três defeitos do próprio painel só apareceram no momento de capturar as
 telas de evidência, e nenhum deles teria sido apanhado pelos testes ou pela
