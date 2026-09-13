@@ -223,3 +223,22 @@ def dynamodb():
         _dynamodb = boto3.client("dynamodb")
 
     return _dynamodb
+
+
+# Aquecimento na inicializacao — ver docs/cycle-12.md.
+#
+# A medicao de 120 equacoes mostrou o `persist` levando **5.972 ms** numa
+# invocacao fria contra 13,6 ms numa quente, com `initDurationMs` de apenas
+# 83 ms. Os seis segundos nao estavam na inicializacao: estavam **dentro do
+# handler**, no `import boto3` e no `boto3.client()` preguicosos, que rodam na
+# primeira chamada com a CPU racionada dos 128 MB.
+#
+# A Lambda concede CPU ampliada durante a fase de inicializacao,
+# independentemente da memoria configurada. Chamar o acessor aqui move o custo
+# para dentro dessa janela.
+#
+# O `if` e o que preserva os testes: a variavel so existe dentro da Lambda.
+# Localmente e na suite o cliente continua preguicoso, e os dubles em memoria
+# entram antes de qualquer boto3 ser importado.
+if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    dynamodb()
