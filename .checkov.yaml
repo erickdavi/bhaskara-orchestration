@@ -9,7 +9,7 @@
 # requisicao em ate 2.000 execucoes, e throttling sem registro de acesso e um
 # alarme mudo.
 #
-# Revisado em 03/09/2026.
+# Revisado em 13/09/2026 (Checkpoint 4).
 
 directory:
   - infra
@@ -69,14 +69,18 @@ skip-check:
   #
   # VPC (117) exigiria NAT ou VPC endpoints para SQS, DynamoDB e Step
   # Functions — custo e latencia sem ganho, porque nao ha recurso privado a
-  # alcancar. Code signing (272) exige um perfil do AWS Signer. X-Ray (50/284)
-  # nao acrescenta ao que o historico da execucao ja mostra neste fluxo.
+  # alcancar. Code signing (272) exige um perfil do AWS Signer.
+  #
+  # CKV_AWS_50 e CKV_AWS_284 (X-Ray na Lambda e na state machine) estavam nesta
+  # lista ate 13/09/2026, com a justificativa de que o traco distribuido nao
+  # acrescentava ao que o historico da execucao ja mostra. O Checkpoint 4
+  # reverteu a decisao e ligou o X-Ray, entao os dois saem daqui e passam a ser
+  # verificados de verdade. Um skip cuja justificativa deixou de valer e pior
+  # que nenhum skip: ele parece uma decisao e e so um resto.
   - CKV_AWS_115  # concorrencia reservada
   - CKV_AWS_116  # dead letter queue da funcao
   - CKV_AWS_117  # funcao em VPC
   - CKV_AWS_272  # code signing
-  - CKV_AWS_50   # X-Ray na Lambda
-  - CKV_AWS_284  # X-Ray na state machine
 
   # --- API Gateway ----------------------------------------------------------
   #

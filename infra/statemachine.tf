@@ -44,8 +44,20 @@ resource "aws_sfn_state_machine" "flow" {
   }
 
   tracing_configuration {
-    # X-Ray desligado: o traco distribuido nao acrescenta nada que o historico
-    # da execucao ja nao mostre neste fluxo, e e cobrado por trace.
-    enabled = false
+    # Ligado no Checkpoint 4, em 13/09/2026, revertendo a decisao do Checkpoint 3.
+    #
+    # O que estava escrito aqui era: "o traco distribuido nao acrescenta nada
+    # que o historico da execucao ja nao mostre neste fluxo, e e cobrado por
+    # trace". Era verdade sob a premissa daquele checkpoint, em que a pergunta
+    # era "o fluxo esta correto?" — e para isso o GetExecutionHistory basta.
+    #
+    # A premissa mudou. A pergunta agora e "onde o tempo e gasto?", e o
+    # historico nao responde: ele mostra a duracao de cada estado, mas nao
+    # separa a invocacao do overhead de transicao, nem mostra os dois ramos do
+    # Parallel sobrepostos no tempo. O service map mostra.
+    #
+    # O custo continua o mesmo, e continua irrelevante: a camada gratuita cobre
+    # 100.000 traces registrados por mes e uma carga de 100 equacoes gera ~100.
+    enabled = var.xray_enabled
   }
 }

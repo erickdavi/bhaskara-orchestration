@@ -165,6 +165,12 @@ variable "api_throttling_burst_limit" {
   default     = 10
 }
 
+variable "xray_enabled" {
+  description = "Traco distribuido no X-Ray, nas funcoes e na state machine. A camada gratuita cobre 100.000 traces registrados por mes; uma carga de 100 equacoes gera ~100."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Tags adicionais aplicadas a todos os recursos."
   type        = map(string)

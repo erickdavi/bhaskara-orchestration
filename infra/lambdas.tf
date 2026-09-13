@@ -88,6 +88,24 @@ resource "aws_lambda_function" "this" {
     system_log_level      = "INFO"
   }
 
+  # O traco distribuido. `Active` faz esta funcao amostrar por conta propria
+  # quando invocada diretamente e, quando invocada pela state machine, herdar a
+  # decisao de amostragem que ja veio no cabecalho — que e o caso aqui, para as
+  # cinco funcoes do fluxo. Sem isto, o service map mostraria a state machine
+  # ligada a caixas vazias.
+  tracing_config {
+    # Active, e nao PassThrough (o padrao): a funcao amostra por conta propria
+    # quando invocada diretamente e, quando invocada pela state machine, herda
+    # a decisao de amostragem que ja veio no cabecalho — que e o caso das cinco
+    # funcoes do fluxo. Com PassThrough, o service map mostraria a state
+    # machine ligada a caixas vazias.
+    #
+    # Escrito como ternario e nao como bloco dinamico de proposito: um
+    # `dynamic` esconde o atributo da analise estatica, e o checkov passa a
+    # reprovar CKV_AWS_50 sem ter como saber que a resposta e "sim".
+    mode = var.xray_enabled ? "Active" : "PassThrough"
+  }
+
   # O log group e criado pelo Terraform, e nao pela primeira invocacao: assim
   # ele tem retencao definida e some no destroy. Criado pela Lambda, ficaria
   # com retencao infinita e sobreviveria ao destroy.

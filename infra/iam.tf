@@ -7,9 +7,10 @@
 # filas). Para um projeto de laboratorio isso passaria despercebido; e
 # justamente por isso que vale escrever a policy certa.
 #
-# Ha exatamente UMA excecao a regra de nao usar "*" como Resource, e ela esta
-# comentada onde aparece: a entrega de logs do Step Functions, que o proprio
-# servico exige assim.
+# Ha exatamente DUAS excecoes a regra de nao usar "*" como Resource, e as duas
+# estao comentadas onde aparecem: a entrega de logs do Step Functions e o envio
+# de segmentos ao X-Ray. Nas duas, e o proprio servico que exige assim — nao ha
+# ARN de recurso a que restringir.
 
 locals {
   # Cada funcao escreve apenas no seu proprio log group.
@@ -23,6 +24,20 @@ locals {
       }
     ]
   }
+
+  # O X-Ray nao tem ARN de recurso a que restringir: um segmento de trace nao
+  # pertence a nada que exista antes de ser criado. A API e de conta, e as duas
+  # acoes abaixo so permitem **escrever** telemetria — nenhuma le trace de
+  # ninguem, nenhuma altera configuracao. Pela regra do projeto, "*" so passa
+  # quando o servico nao aceita outra coisa, e este e o segundo caso.
+  xray_statements = var.xray_enabled ? [
+    {
+      Sid      = "EnviaSegmentosAoXRayExigeResourceCuringa"
+      Effect   = "Allow"
+      Action   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+      Resource = "*"
+    }
+  ] : []
 
   function_statements = {
     # Publica na fila e nada mais. Nao consome, nao le, nao inicia execucao.
@@ -145,6 +160,7 @@ resource "aws_iam_role_policy" "function" {
     Version = "2012-10-17"
     Statement = concat(
       local.function_log_statements[each.key],
+      local.xray_statements,
       local.function_statements[each.key],
     )
   })
@@ -186,6 +202,20 @@ resource "aws_iam_role_policy" "state_machine" {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
         Resource = aws_sqs_queue.dead_letter.arn
+      },
+      {
+        # A state machine precisa de duas acoes a mais que as funcoes: ela e
+        # quem decide se um trace sera amostrado, e para isso le as regras de
+        # amostragem da conta. As duas sao de leitura.
+        Sid    = "AmostragemDoXRayExigeResourceCuringa"
+        Effect = "Allow"
+        Action = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords",
+          "xray:GetSamplingRules",
+          "xray:GetSamplingTargets",
+        ]
+        Resource = "*"
       },
       {
         # A UNICA permissao com Resource "*" do projeto, e nao por escolha: a
