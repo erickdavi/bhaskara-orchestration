@@ -14,16 +14,23 @@ numero, e calcular duas vezes seria desperdicio sem nenhum ganho didatico. Esse
 caso vira uma raiz com rotulo "double", que o Persist expande em x1 e x2.
 """
 
-import json
-
-from chaos import maybe_fail
+from chaos import TransientFailure, maybe_fail
+from observability import WARN, invocation
 from quadratic import root
 
 STATE_NAME = "Root"
 
+SERVICE = "root"
+
 
 def lambda_handler(event, context):
-    maybe_fail(event, STATE_NAME)
+    log = invocation(SERVICE, event, context)
+
+    try:
+        maybe_fail(event, STATE_NAME)
+    except TransientFailure as error:
+        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        raise
 
     validated = event.get("validated") or {}
     label = event.get("label")
@@ -32,15 +39,8 @@ def lambda_handler(event, context):
 
     result = {"label": label, "value": value}
 
-    log(
-        event="root_calculated",
-        execution=(event.get("meta") or {}).get("idempotency_key"),
-        state=event.get("state"),
-        **result,
-    )
+    # `state` sai do envelope: o mesmo handler atende RootX1, RootX2 e
+    # RootDouble, e sem separa-los a duracao dos tres viraria uma media so.
+    log("root_calculated", **result)
 
     return result
-
-
-def log(**fields):
-    print(json.dumps(fields, ensure_ascii=False, allow_nan=False))

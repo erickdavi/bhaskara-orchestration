@@ -12,12 +12,13 @@ definicao do fluxo. Com a classificacao aqui, a state machine so roteia — quem
 sabe matematica e o codigo, e o YAML fica legivel para quem nunca viu Bhaskara.
 """
 
-import json
-
-from chaos import maybe_fail
+from chaos import TransientFailure, maybe_fail
+from observability import WARN, invocation
 from quadratic import discriminant
 
 STATE_NAME = "Delta"
+
+SERVICE = "delta"
 
 POSITIVE = "positive"
 ZERO = "zero"
@@ -25,7 +26,13 @@ NEGATIVE = "negative"
 
 
 def lambda_handler(event, context):
-    maybe_fail(event, STATE_NAME)
+    log = invocation(SERVICE, event, context)
+
+    try:
+        maybe_fail(event, STATE_NAME)
+    except TransientFailure as error:
+        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        raise
 
     validated = event.get("validated") or {}
 
@@ -33,11 +40,7 @@ def lambda_handler(event, context):
 
     result = {"value": value, "sign": classify(value)}
 
-    log(
-        event="delta_calculated",
-        execution=execution_name(event),
-        **result,
-    )
+    log("delta_calculated", **result)
 
     return result
 
@@ -50,11 +53,3 @@ def classify(value):
         return ZERO
 
     return NEGATIVE
-
-
-def execution_name(event):
-    return (event.get("meta") or {}).get("idempotency_key")
-
-
-def log(**fields):
-    print(json.dumps(fields, ensure_ascii=False, allow_nan=False))

@@ -32,8 +32,11 @@ import os
 import time
 
 from idempotency import execution_name, key
+from observability import ERROR, WARN, invocation
 
 STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN", "")
+
+SERVICE = "dispatcher"
 
 ALREADY_EXISTS = "ExecutionAlreadyExists"
 
@@ -41,10 +44,11 @@ _stepfunctions = None
 
 
 def lambda_handler(event, context):
-    records = event.get("Records") or []
-    request_id = getattr(context, "aws_request_id", None)
+    log = invocation(SERVICE, event, context)
 
-    log(event="batch_received", request_id=request_id, batch_size=len(records))
+    records = event.get("Records") or []
+
+    log("batch_received", batch_size=len(records))
 
     failures = []
     started = duplicates = 0
@@ -53,7 +57,7 @@ def lambda_handler(event, context):
         message_id = record.get("messageId")
 
         try:
-            if dispatch(record, request_id):
+            if dispatch(record, log):
                 started += 1
             else:
                 duplicates += 1
@@ -62,26 +66,20 @@ def lambda_handler(event, context):
             # esta mensagem. As demais do lote ja foram confirmadas — e para
             # isso que serve o ReportBatchItemFailures.
             log(
-                event="dispatch_failed",
-                request_id=request_id,
+                "dispatch_failed",
+                level=ERROR,
                 message_id=message_id,
                 error_type=type(error).__name__,
                 error=str(error),
             )
             failures.append({"itemIdentifier": message_id})
 
-    log(
-        event="batch_dispatched",
-        request_id=request_id,
-        started=started,
-        duplicates=duplicates,
-        failed=len(failures),
-    )
+    log("batch_dispatched", started=started, duplicates=duplicates, failed=len(failures))
 
     return {"batchItemFailures": failures}
 
 
-def dispatch(record, request_id):
+def dispatch(record, log):
     """Inicia a execucao. Devolve False se ela ja existia."""
     body = record.get("body")
     batch_id = attribute(record, "BatchId") or record.get("messageId") or "adhoc"
@@ -111,7 +109,7 @@ def dispatch(record, request_id):
         try:
             payload["meta"]["chaos"] = json.loads(chaos)
         except ValueError:
-            log(event="chaos_attribute_ignored", message_id=record.get("messageId"))
+            log("chaos_attribute_ignored", level=WARN, message_id=record.get("messageId"))
 
     try:
         stepfunctions().start_execution(
@@ -123,22 +121,25 @@ def dispatch(record, request_id):
         if error_code(error) != ALREADY_EXISTS:
             raise
 
+        # `execution` carrega a chave de idempotencia, e nao o nome da execucao,
+        # para casar com o que os estados do fluxo gravam: e esse campo que liga
+        # esta linha as ~7 linhas seguintes da mesma equacao.
         log(
-            event="execution_deduplicated",
-            request_id=request_id,
+            "execution_deduplicated",
             message_id=record.get("messageId"),
-            execution=name,
-            batch=batch_id,
+            execution=idempotency_key,
+            execution_name=name,
+            batch_id=batch_id,
         )
 
         return False
 
     log(
-        event="execution_started",
-        request_id=request_id,
+        "execution_started",
         message_id=record.get("messageId"),
-        execution=name,
-        batch=batch_id,
+        execution=idempotency_key,
+        execution_name=name,
+        batch_id=batch_id,
     )
 
     return True
@@ -191,7 +192,3 @@ def stepfunctions():
         _stepfunctions = boto3.client("stepfunctions")
 
     return _stepfunctions
-
-
-def log(**fields):
-    print(json.dumps(fields, ensure_ascii=False, allow_nan=False))

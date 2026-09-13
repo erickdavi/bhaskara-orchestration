@@ -58,6 +58,36 @@ resource "aws_lambda_function" "this" {
     }
   }
 
+  # Formato JSON no log da plataforma — medido antes de adotado, em
+  # docs/cycle-08.md, contra uma funcao descartavel na conta real.
+  #
+  # O que muda: as linhas que o proprio runtime escreve (initStart, start,
+  # report) deixam de ser texto e viram JSON com campos. O REPORT, que era
+  #
+  #   REPORT RequestId: ... Billed Duration: 98 ms  Max Memory Used: 35 MB
+  #
+  # passa a ser
+  #
+  #   {"type":"platform.report","record":{"metrics":{"billedDurationMs":63,
+  #    "maxMemoryUsedMB":35,"initDurationMs":60.644}}}
+  #
+  # e a analise de memoria e de cold start do Checkpoint 4 vira uma query com
+  # `stats avg(record.metrics.billedDurationMs)`, em vez de regex sobre texto.
+  #
+  # O que NAO muda: o log da aplicacao. O envelope de shared/observability.py
+  # sai por print(), e print() atravessa este formato sem ser embrulhado — foi
+  # o que a medicao confirmou, e e o que mantem o EMF do proximo ciclo
+  # funcionando, porque o `_aws` precisa estar na raiz da linha.
+  #
+  # SystemLogLevel fica em INFO, e nao em WARN. WARN economizaria bytes e
+  # apagaria justamente o platform.report — medir o custo jogando fora o dado
+  # de custo.
+  logging_config {
+    log_format            = "JSON"
+    application_log_level = "INFO"
+    system_log_level      = "INFO"
+  }
+
   # O log group e criado pelo Terraform, e nao pela primeira invocacao: assim
   # ele tem retencao definida e some no destroy. Criado pela Lambda, ficaria
   # com retencao infinita e sobreviveria ao destroy.

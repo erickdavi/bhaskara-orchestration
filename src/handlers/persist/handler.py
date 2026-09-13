@@ -23,11 +23,14 @@ preserva o valor exato de qualquer float; nada aqui e filtrado ou ordenado por
 esses campos.
 """
 
-import json
 import os
 import time
 
+from observability import WARN, invocation
+
 STATE_NAME = "Persist"
+
+SERVICE = "persist"
 
 TABLE_NAME = os.environ.get("RESULTS_TABLE", "")
 
@@ -41,9 +44,15 @@ _dynamodb = None
 
 
 def lambda_handler(event, context):
-    from chaos import maybe_fail
+    from chaos import TransientFailure, maybe_fail
 
-    maybe_fail(event, STATE_NAME)
+    log = invocation(SERVICE, event, context)
+
+    try:
+        maybe_fail(event, STATE_NAME)
+    except TransientFailure as error:
+        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        raise
 
     meta = event.get("meta") or {}
     pk = meta.get("idempotency_key")
@@ -53,18 +62,37 @@ def lambda_handler(event, context):
 
     item = build_item(pk, event, meta)
 
+    # A unica medida da latencia que o sistema inteiro entrega. Nenhum outro
+    # estado consegue faze-la: so aqui existem as duas pontas, o submitted_at
+    # gravado pelo dispatcher e o relogio de agora.
+    latency = end_to_end_ms(meta)
+
     stored = put_once(item)
 
     if stored:
-        log(event="result_stored", execution=pk, batch=item["batch_id"]["S"])
+        log("result_stored", end_to_end_ms=latency)
 
         return {"stored": True, "duplicate": False, "key": pk, "result": readable(item)}
 
     existing = fetch(pk)
 
-    log(event="result_duplicate", execution=pk, batch=item["batch_id"]["S"])
+    log("result_duplicate", end_to_end_ms=latency)
 
     return {"stored": False, "duplicate": True, "key": pk, "result": readable(existing or item)}
+
+
+def end_to_end_ms(meta):
+    """Milissegundos entre a publicacao na fila e agora, quando da para saber.
+
+    Devolve None em vez de zero se o submitted_at nao veio: um zero entraria na
+    estatistica como uma execucao instantanea e puxaria a media para baixo.
+    """
+    submitted = meta.get("submitted_at")
+
+    if not isinstance(submitted, (int, float)) or isinstance(submitted, bool):
+        return None
+
+    return max(0, int(time.time() * 1000) - int(submitted))
 
 
 def build_item(pk, event, meta):
@@ -175,7 +203,3 @@ def dynamodb():
         _dynamodb = boto3.client("dynamodb")
 
     return _dynamodb
-
-
-def log(**fields):
-    print(json.dumps(fields, ensure_ascii=False, allow_nan=False))

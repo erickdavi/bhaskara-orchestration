@@ -31,6 +31,9 @@ import os
 import time
 
 from api_auth import authorized
+from observability import WARN, invocation
+
+SERVICE = "status"
 
 API_KEY = os.environ.get("API_KEY", "")
 
@@ -58,7 +61,10 @@ _stepfunctions = None
 
 
 def lambda_handler(event, context):
+    log = invocation(SERVICE, event, context)
+
     if not authorized(event, API_KEY):
+        log("request_unauthorized", level=WARN)
         return response(403, {"error": "Chave de API ausente ou invalida."})
 
     params = event.get("queryStringParameters") or {}
@@ -79,6 +85,17 @@ def lambda_handler(event, context):
         # Detalhe de uma execucao so: aqui vale a pena o historico oficial, que
         # traz entrada e saida de cada estado sem depender do log.
         body["execution"] = history(params["execution"])
+
+    # O painel faz poll de 2 em 2 segundos, entao esta linha e a mais frequente
+    # do sistema. Ela carrega so contadores — o corpo inteiro da resposta em log
+    # dobraria a ingestao para nao dizer nada que o painel ja nao mostre.
+    log(
+        "flow_reported",
+        window_ms=now - since,
+        executions=len((body["flow"] or {}).get("executions") or []),
+        results=len(body["results"] or []),
+        dead_letter=len(body["dead_letter"] or []),
+    )
 
     return response(200, body)
 

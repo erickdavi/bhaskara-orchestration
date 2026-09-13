@@ -28,6 +28,7 @@ import uuid
 
 from api_auth import authorized
 from generator import generate
+from observability import ERROR, WARN, invocation
 
 ORDERS_QUEUE_URL = os.environ.get("ORDERS_QUEUE_URL", "")
 
@@ -38,6 +39,8 @@ API_KEY = os.environ.get("API_KEY", "")
 # transicao de estado e a unidade de custo. 2.000 equacoes sao ~18.000
 # transicoes — o suficiente para uma carga grande e longe de um susto na fatura.
 MAX_QUANTITY = int(os.environ.get("MAX_QUANTITY", "2000"))
+
+SERVICE = "submit"
 
 BATCH_SIZE = 10
 
@@ -51,16 +54,21 @@ class InvalidRequest(Exception):
 
 
 def lambda_handler(event, context):
+    log = invocation(SERVICE, event, context)
+
     started = time.monotonic()
 
     if not authorized(event, API_KEY):
-        log(event="request_unauthorized")
+        # WARN, e nao ERROR: uma chamada sem chave e o sistema funcionando como
+        # projetado. Mas precisa de nivel proprio — e o que o metric filter do
+        # access log conta para mostrar varredura automatizada no dashboard.
+        log("request_unauthorized", level=WARN)
         return response(403, {"error": "Chave de API ausente ou invalida."})
 
     try:
         options = parse_request(event)
     except InvalidRequest as error:
-        log(event="request_rejected", reason=str(error))
+        log("request_rejected", level=WARN, reason=str(error))
         return response(400, {"error": str(error)})
 
     # O batch_id entra na chave de idempotencia de cada mensagem. E o que faz a
@@ -68,9 +76,9 @@ def lambda_handler(event, context):
     # ele, a segunda demonstracao do dia apareceria vazia.
     batch_id = options.pop("batch_id", None) or new_batch_id()
 
-    log(event="batch_requested", batch=batch_id, **options)
+    log("batch_requested", batch_id=batch_id, **options)
 
-    published, failed, batches, truncated, chaos = publish(batch_id, options, context)
+    published, failed, batches, truncated, chaos = publish(batch_id, options, context, log)
 
     body = {
         "batch_id": batch_id,
@@ -91,7 +99,7 @@ def lambda_handler(event, context):
             "requisicao ou divida a carga em solicitacoes menores."
         )
 
-    log(event="batch_published", **body)
+    log("batch_published", **body)
 
     # 202 e nao 200: as mensagens foram aceitas para processamento, que
     # acontece depois e em outro lugar. Nenhum resultado esta nesta resposta.
@@ -164,7 +172,7 @@ def ratio_of(payload, name):
     return float(ratio)
 
 
-def publish(batch_id, options, context):
+def publish(batch_id, options, context, log):
     """Publica em lotes de 10, parando se o tempo acabar."""
     published = failed = batches = chaos = 0
     truncated = False
@@ -212,8 +220,10 @@ def publish(batch_id, options, context):
             # outras. Registrar em vez de levantar — perder 3 de 1.000 nao
             # justifica descartar as 997 ja publicadas.
             log(
-                event="batch_partially_rejected",
-                batch=batches,
+                "batch_partially_rejected",
+                level=ERROR,
+                batch_id=batch_id,
+                batch_number=batches,
                 failed=len(rejected),
                 first_error=rejected[0].get("Message"),
             )
@@ -268,7 +278,3 @@ def response(status_code, body):
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body, ensure_ascii=False, allow_nan=False),
     }
-
-
-def log(**fields):
-    print(json.dumps(fields, ensure_ascii=False, allow_nan=False))

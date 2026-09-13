@@ -17,11 +17,17 @@ dead-letter queue.
 import json
 import math
 
-from chaos import maybe_fail
+from chaos import TransientFailure, maybe_fail
+from observability import ERROR, WARN, invocation
 
 COEFFICIENTS = ("a", "b", "c")
 
 STATE_NAME = "Validate"
+
+# Qual das sete funcoes emitiu a linha. Constante explicita, e nao variavel de
+# ambiente: o simulador local roda as sete no mesmo processo, e uma variavel so
+# daria o mesmo nome para todas.
+SERVICE = "validate"
 
 
 class InvalidEquation(Exception):
@@ -34,27 +40,37 @@ class InvalidEquation(Exception):
 
 
 def lambda_handler(event, context):
-    maybe_fail(event, STATE_NAME)
+    log = invocation(SERVICE, event, context)
 
-    equation = coerce(event)
+    try:
+        maybe_fail(event, STATE_NAME)
 
-    missing = [name for name in COEFFICIENTS if name not in equation]
+        equation = coerce(event)
 
-    if missing:
-        raise InvalidEquation("Coeficientes ausentes: %s." % ", ".join(missing))
+        missing = [name for name in COEFFICIENTS if name not in equation]
 
-    validated = {name: coefficient(equation[name], name) for name in COEFFICIENTS}
+        if missing:
+            raise InvalidEquation("Coeficientes ausentes: %s." % ", ".join(missing))
 
-    if validated["a"] == 0:
-        # A mesma regra que o calculator aplica, verificada uma etapa antes: o
-        # estado Delta nao deve descobrir isso no meio da conta.
-        raise InvalidEquation("O valor de 'a' nao pode ser zero.")
+        validated = {name: coefficient(equation[name], name) for name in COEFFICIENTS}
 
-    log(
-        event="equation_validated",
-        execution=execution_name(event),
-        **validated,
-    )
+        if validated["a"] == 0:
+            # A mesma regra que o calculator aplica, verificada uma etapa antes: o
+            # estado Delta nao deve descobrir isso no meio da conta.
+            raise InvalidEquation("O valor de 'a' nao pode ser zero.")
+    except InvalidEquation as error:
+        # A recusa vira linha de erro antes de virar excecao. A state machine
+        # registra o **nome** do erro, que e o que ela usa para rotear; a frase
+        # que diz qual coeficiente estava errado so existe aqui.
+        log("equation_rejected", level=ERROR, error_type="InvalidEquation", reason=str(error))
+        raise
+    except TransientFailure as error:
+        # Caos e falha pedida pela carga. Registrada como WARN e com evento
+        # proprio para nao poluir a contagem de erro real na analise.
+        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        raise
+
+    log("equation_validated", **validated)
 
     return validated
 
@@ -114,14 +130,3 @@ def coefficient(value, name):
 
 def reject_constant(name):
     raise InvalidEquation("Os coeficientes nao aceitam o literal %s." % name)
-
-
-def execution_name(event):
-    return (event.get("meta") or {}).get("idempotency_key")
-
-
-def log(**fields):
-    # print em vez de logging: o runtime da Lambda prefixa as linhas do logging
-    # com nivel, timestamp e requestId, o que quebraria o JSON puro que o
-    # CloudWatch Logs Insights consulta por campo.
-    print(json.dumps(fields, ensure_ascii=False, allow_nan=False))
