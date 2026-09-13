@@ -28,6 +28,7 @@ import uuid
 
 from api_auth import authorized
 from generator import generate
+from metrics import counter
 from observability import ERROR, WARN, invocation
 
 ORDERS_QUEUE_URL = os.environ.get("ORDERS_QUEUE_URL", "")
@@ -99,7 +100,7 @@ def lambda_handler(event, context):
             "requisicao ou divida a carga em solicitacoes menores."
         )
 
-    log("batch_published", **body)
+    log("batch_published", measures=[counter("EquationsSubmitted", published)], **body)
 
     # 202 e nao 200: as mensagens foram aceitas para processamento, que
     # acontece depois e em outro lugar. Nenhum resultado esta nesta resposta.

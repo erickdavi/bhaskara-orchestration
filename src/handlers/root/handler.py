@@ -15,6 +15,7 @@ caso vira uma raiz com rotulo "double", que o Persist expande em x1 e x2.
 """
 
 from chaos import TransientFailure, maybe_fail
+from metrics import counter
 from observability import WARN, invocation
 from quadratic import root
 
@@ -29,7 +30,13 @@ def lambda_handler(event, context):
     try:
         maybe_fail(event, STATE_NAME)
     except TransientFailure as error:
-        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        log(
+            "chaos_injected",
+            level=WARN,
+            measures=[counter("ChaosInjected")],
+            error_type="TransientFailure",
+            detail=str(error),
+        )
         raise
 
     validated = event.get("validated") or {}
@@ -41,6 +48,6 @@ def lambda_handler(event, context):
 
     # `state` sai do envelope: o mesmo handler atende RootX1, RootX2 e
     # RootDouble, e sem separa-los a duracao dos tres viraria uma media so.
-    log("root_calculated", **result)
+    log("root_calculated", measures=[], **result)
 
     return result

@@ -95,6 +95,7 @@ def lambda_handler(event, context):
         executions=len((body["flow"] or {}).get("executions") or []),
         results=len(body["results"] or []),
         dead_letter=len(body["dead_letter"] or []),
+        measures=[],
     )
 
     return response(200, body)

@@ -26,6 +26,7 @@ esses campos.
 import os
 import time
 
+from metrics import counter, duration
 from observability import WARN, invocation
 
 STATE_NAME = "Persist"
@@ -51,7 +52,13 @@ def lambda_handler(event, context):
     try:
         maybe_fail(event, STATE_NAME)
     except TransientFailure as error:
-        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        log(
+            "chaos_injected",
+            level=WARN,
+            measures=[counter("ChaosInjected")],
+            error_type="TransientFailure",
+            detail=str(error),
+        )
         raise
 
     meta = event.get("meta") or {}
@@ -70,15 +77,28 @@ def lambda_handler(event, context):
     stored = put_once(item)
 
     if stored:
-        log("result_stored", end_to_end_ms=latency)
+        log("result_stored", measures=end_to_end(latency), end_to_end_ms=latency)
 
         return {"stored": True, "duplicate": False, "key": pk, "result": readable(item)}
 
     existing = fetch(pk)
 
-    log("result_duplicate", end_to_end_ms=latency)
+    log(
+        "result_duplicate",
+        measures=[counter("PersistDuplicate")] + end_to_end(latency),
+        end_to_end_ms=latency,
+    )
 
     return {"stored": False, "duplicate": True, "key": pk, "result": readable(existing or item)}
+
+
+def end_to_end(latency):
+    """A metrica de latencia, ou nenhuma metrica se nao houve como medir.
+
+    Sem o submitted_at o valor seria inventado, e uma latencia inventada
+    entrando na media e pior do que uma amostra a menos.
+    """
+    return [] if latency is None else [duration("EndToEndLatency", latency)]
 
 
 def end_to_end_ms(meta):

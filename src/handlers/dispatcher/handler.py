@@ -32,6 +32,7 @@ import os
 import time
 
 from idempotency import execution_name, key
+from metrics import counter
 from observability import ERROR, WARN, invocation
 
 STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN", "")
@@ -74,7 +75,19 @@ def lambda_handler(event, context):
             )
             failures.append({"itemIdentifier": message_id})
 
-    log("batch_dispatched", started=started, duplicates=duplicates, failed=len(failures))
+    # As duas metricas saem sempre, inclusive valendo zero: um lote sem
+    # duplicata e um dado, e a serie com buraco nao distingue "nenhuma" de
+    # "ninguem mediu".
+    log(
+        "batch_dispatched",
+        measures=[
+            counter("ExecutionsStarted", started),
+            counter("ExecutionsDeduplicated", duplicates),
+        ],
+        started=started,
+        duplicates=duplicates,
+        failed=len(failures),
+    )
 
     return {"batchItemFailures": failures}
 

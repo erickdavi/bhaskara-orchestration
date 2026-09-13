@@ -13,6 +13,7 @@ sabe matematica e o codigo, e o YAML fica legivel para quem nunca viu Bhaskara.
 """
 
 from chaos import TransientFailure, maybe_fail
+from metrics import counter
 from observability import WARN, invocation
 from quadratic import discriminant
 
@@ -31,7 +32,13 @@ def lambda_handler(event, context):
     try:
         maybe_fail(event, STATE_NAME)
     except TransientFailure as error:
-        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        log(
+            "chaos_injected",
+            level=WARN,
+            measures=[counter("ChaosInjected")],
+            error_type="TransientFailure",
+            detail=str(error),
+        )
         raise
 
     validated = event.get("validated") or {}
@@ -40,7 +47,13 @@ def lambda_handler(event, context):
 
     result = {"value": value, "sign": classify(value)}
 
-    log("delta_calculated", **result)
+    # A distribuicao dos tres ramos do Choice, medida na origem. O painel ja
+    # mostra a proporcao da carga atual; a metrica a guarda ao longo do tempo.
+    log(
+        "delta_calculated",
+        measures=[counter("EquationsByDeltaSign", Sign=result["sign"])],
+        **result,
+    )
 
     return result
 

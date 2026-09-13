@@ -18,6 +18,7 @@ import json
 import math
 
 from chaos import TransientFailure, maybe_fail
+from metrics import counter
 from observability import ERROR, WARN, invocation
 
 COEFFICIENTS = ("a", "b", "c")
@@ -36,7 +37,16 @@ class InvalidEquation(Exception):
     O nome desta classe vira o `errorType` da Lambda e e o mesmo que aparece em
     `ErrorEquals` no YAML, com `MaxAttempts: 0`. Renomear uma coisa sem a outra
     faria a state machine reentregar 3 vezes uma mensagem irrecuperavel.
+
+    O `reason` e um codigo curto de um conjunto fechado, e nao a frase de erro:
+    ele vira dimensao da metrica `ValidationRejected`, e uma dimensao cujo valor
+    inclui o nome do coeficiente ou o texto do JSONDecodeError seria uma serie
+    temporal nova por mensagem malformada.
     """
+
+    def __init__(self, message, reason="unknown"):
+        super().__init__(message)
+        self.reason = reason
 
 
 def lambda_handler(event, context):
@@ -50,27 +60,42 @@ def lambda_handler(event, context):
         missing = [name for name in COEFFICIENTS if name not in equation]
 
         if missing:
-            raise InvalidEquation("Coeficientes ausentes: %s." % ", ".join(missing))
+            raise InvalidEquation(
+                "Coeficientes ausentes: %s." % ", ".join(missing), "missing_coefficient"
+            )
 
         validated = {name: coefficient(equation[name], name) for name in COEFFICIENTS}
 
         if validated["a"] == 0:
             # A mesma regra que o calculator aplica, verificada uma etapa antes: o
             # estado Delta nao deve descobrir isso no meio da conta.
-            raise InvalidEquation("O valor de 'a' nao pode ser zero.")
+            raise InvalidEquation("O valor de 'a' nao pode ser zero.", "a_is_zero")
     except InvalidEquation as error:
         # A recusa vira linha de erro antes de virar excecao. A state machine
         # registra o **nome** do erro, que e o que ela usa para rotear; a frase
         # que diz qual coeficiente estava errado so existe aqui.
-        log("equation_rejected", level=ERROR, error_type="InvalidEquation", reason=str(error))
+        log(
+            "equation_rejected",
+            level=ERROR,
+            measures=[counter("ValidationRejected", Reason=error.reason)],
+            error_type="InvalidEquation",
+            reason=error.reason,
+            detail=str(error),
+        )
         raise
     except TransientFailure as error:
-        # Caos e falha pedida pela carga. Registrada como WARN e com evento
-        # proprio para nao poluir a contagem de erro real na analise.
-        log("chaos_injected", level=WARN, error_type="TransientFailure", reason=str(error))
+        # Caos e falha pedida pela carga. Registrada como WARN, com evento e
+        # metrica proprios, para nao poluir a contagem de erro real na analise.
+        log(
+            "chaos_injected",
+            level=WARN,
+            measures=[counter("ChaosInjected")],
+            error_type="TransientFailure",
+            detail=str(error),
+        )
         raise
 
-    log("equation_validated", **validated)
+    log("equation_validated", measures=[], **validated)
 
     return validated
 
@@ -91,13 +116,14 @@ def coerce(event):
 
     if equation is not None:
         raise InvalidEquation(
-            "A equacao deve ser um objeto JSON, e nao %s." % type(equation).__name__
+            "A equacao deve ser um objeto JSON, e nao %s." % type(equation).__name__,
+            "equation_not_object",
         )
 
     raw = (event.get("meta") or {}).get("raw_body")
 
     if raw is None:
-        raise InvalidEquation("Mensagem sem equacao.")
+        raise InvalidEquation("Mensagem sem equacao.", "missing_equation")
 
     try:
         # parse_constant intercepta NaN, Infinity e -Infinity, que o json.loads
@@ -105,10 +131,12 @@ def coerce(event):
         # atravessariam a validacao de tipo abaixo — sao float.
         parsed = json.loads(raw, parse_constant=reject_constant)
     except json.JSONDecodeError as error:
-        raise InvalidEquation("Corpo da mensagem nao e JSON valido: %s" % error) from None
+        raise InvalidEquation(
+            "Corpo da mensagem nao e JSON valido: %s" % error, "malformed_json"
+        ) from None
 
     if not isinstance(parsed, dict):
-        raise InvalidEquation("Corpo da mensagem deve ser um objeto JSON.")
+        raise InvalidEquation("Corpo da mensagem deve ser um objeto JSON.", "body_not_object")
 
     return parsed
 
@@ -119,14 +147,17 @@ def coefficient(value, name):
     # que o remetente nunca quis enviar.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidEquation(
-            "O coeficiente '%s' deve ser um numero, e nao %s." % (name, type(value).__name__)
+            "O coeficiente '%s' deve ser um numero, e nao %s." % (name, type(value).__name__),
+            "coefficient_not_number",
         )
 
     if not math.isfinite(value):
-        raise InvalidEquation("O coeficiente '%s' deve ser um numero finito." % name)
+        raise InvalidEquation(
+            "O coeficiente '%s' deve ser um numero finito." % name, "coefficient_not_finite"
+        )
 
     return value
 
 
 def reject_constant(name):
-    raise InvalidEquation("Os coeficientes nao aceitam o literal %s." % name)
+    raise InvalidEquation("Os coeficientes nao aceitam o literal %s." % name, "nan_literal")

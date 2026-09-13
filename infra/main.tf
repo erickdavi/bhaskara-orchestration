@@ -53,7 +53,7 @@ locals {
   functions = {
     submit = {
       description = "Recebe POST /orders e publica N equacoes na fila orders"
-      files       = ["handlers/submit/handler.py", "handlers/submit/generator.py", "shared/api_auth.py", "shared/observability.py"]
+      files       = ["handlers/submit/handler.py", "handlers/submit/generator.py", "shared/api_auth.py", "shared/observability.py", "shared/metrics.py"]
       memory      = var.submit_memory_size
       timeout     = var.submit_timeout
       environment = {
@@ -65,7 +65,7 @@ locals {
 
     dispatcher = {
       description = "Consome a fila orders e inicia uma execucao por mensagem"
-      files       = ["handlers/dispatcher/handler.py", "shared/idempotency.py", "shared/observability.py"]
+      files       = ["handlers/dispatcher/handler.py", "shared/idempotency.py", "shared/observability.py", "shared/metrics.py"]
       memory      = var.submit_memory_size
       timeout     = var.submit_timeout
       environment = {
@@ -75,7 +75,7 @@ locals {
 
     validate = {
       description = "Estado Validate: normaliza e valida os coeficientes"
-      files       = ["handlers/validate/handler.py", "shared/chaos.py", "shared/observability.py"]
+      files       = ["handlers/validate/handler.py", "shared/chaos.py", "shared/observability.py", "shared/metrics.py"]
       memory      = var.task_memory_size
       timeout     = var.task_timeout
       environment = {}
@@ -83,7 +83,7 @@ locals {
 
     delta = {
       description = "Estado Delta: calcula b^2 - 4ac e classifica o sinal"
-      files       = ["handlers/delta/handler.py", "shared/chaos.py", "shared/quadratic.py", "shared/calculator.py", "shared/observability.py"]
+      files       = ["handlers/delta/handler.py", "shared/chaos.py", "shared/quadratic.py", "shared/calculator.py", "shared/observability.py", "shared/metrics.py"]
       memory      = var.task_memory_size
       timeout     = var.task_timeout
       environment = {}
@@ -91,7 +91,7 @@ locals {
 
     root = {
       description = "Estados RootX1, RootX2 e RootDouble: calcula uma raiz"
-      files       = ["handlers/root/handler.py", "shared/chaos.py", "shared/quadratic.py", "shared/calculator.py", "shared/observability.py"]
+      files       = ["handlers/root/handler.py", "shared/chaos.py", "shared/quadratic.py", "shared/calculator.py", "shared/observability.py", "shared/metrics.py"]
       memory      = var.task_memory_size
       timeout     = var.task_timeout
       environment = {}
@@ -99,7 +99,7 @@ locals {
 
     persist = {
       description = "Estado Persist: grava o resultado de forma idempotente"
-      files       = ["handlers/persist/handler.py", "shared/chaos.py", "shared/observability.py"]
+      files       = ["handlers/persist/handler.py", "shared/chaos.py", "shared/observability.py", "shared/metrics.py"]
       memory      = var.task_memory_size
       timeout     = var.task_timeout
       environment = {
@@ -110,7 +110,7 @@ locals {
 
     status = {
       description = "Responde GET /flow com o estado do fluxo para o painel"
-      files       = ["handlers/status/handler.py", "shared/api_auth.py", "shared/observability.py"]
+      files       = ["handlers/status/handler.py", "shared/api_auth.py", "shared/observability.py", "shared/metrics.py"]
       memory      = var.status_memory_size
       timeout     = var.status_timeout
       environment = {

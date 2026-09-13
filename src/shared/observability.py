@@ -52,6 +52,8 @@ docs/cycle-08.md.
 import json
 import time
 
+import metrics
+
 INFO = "INFO"
 WARN = "WARN"
 ERROR = "ERROR"
@@ -98,7 +100,7 @@ def invocation(service, event=None, context=None):
     base["request_id"] = getattr(context, "aws_request_id", None)
     base["cold_start"] = cold
 
-    def log(event_name, level=INFO, **fields):
+    def log(event_name, level=INFO, measures=None, **fields):
         line = dict(base)
         line["event"] = event_name
         line["level"] = level
@@ -109,7 +111,7 @@ def invocation(service, event=None, context=None):
         # SQS nao carrega no formato do fluxo.
         line.update(fields)
 
-        emit(line)
+        emit(line, measures if measures is None else instrument(line, measures))
 
     return log
 
@@ -136,7 +138,41 @@ def correlation(event):
     }
 
 
-def emit(line):
+def instrument(line, measures):
+    """Acrescenta as tres metricas que valem para qualquer handler.
+
+    Passar `measures` — mesmo uma lista vazia — marca esta linha como o ponto de
+    medicao da invocacao. Duracao, cold start e reentrega valem para as sete
+    funcoes, e repeti-las em cada handler seria sete oportunidades de escrever
+    um nome de metrica diferente do das outras seis.
+
+    Cada handler tem **uma** linha de medicao. Duas linhas com `measures` na
+    mesma invocacao contariam a duracao duas vezes.
+    """
+    service = line.get("service")
+    state = line.get("state")
+
+    measured = list(measures)
+    measured.append(
+        metrics.duration("HandlerDuration", line["duration_ms"], Service=service, State=state)
+    )
+
+    # ColdStart e RetryAttempt saem sem dimensao, de proposito. Com `Service`
+    # seriam 7 e 6 series em vez de 1 e 1, e a pergunta que a dimensao
+    # responderia — qual funcao esfria, qual estado reentrega — ja e respondida
+    # pelo `initDurationMs` do platform.report e pelos campos desta mesma linha,
+    # no Logs Insights, sem serie temporal nenhuma. A metrica aqui existe para
+    # o grafico ao longo do tempo; o detalhe fica no log.
+    if line.get("cold_start"):
+        measured.append(metrics.counter("ColdStart"))
+
+    if line.get("attempt"):
+        measured.append(metrics.counter("RetryAttempt"))
+
+    return measured
+
+
+def emit(line, measures=None):
     """Escreve uma linha, na ordem do envelope e sem os campos vazios."""
     ordered = {name: line[name] for name in ENVELOPE if line.get(name) is not None}
 
@@ -150,6 +186,11 @@ def emit(line):
     for name, value in line.items():
         if name not in ordered and name not in ENVELOPE:
             ordered[name] = value
+
+    # O bloco EMF entra por ultimo: ele e para o CloudWatch ler, e quem le a
+    # linha no console quer ver antes o que aconteceu.
+    if measures:
+        ordered.update(metrics.block(measures, time.time() * 1000))
 
     # default=str: telemetria nao pode derrubar regra de negocio. Um Decimal
     # vindo do DynamoDB faria o json.dumps levantar TypeError e o handler
