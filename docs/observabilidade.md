@@ -2,14 +2,17 @@
 
 ## Introdução
 
-A disciplina propôs uma sequência de checkpoints em que cada entrega monta uma
-arquitetura serverless diferente ao redor do mesmo problema, o cálculo das
-raízes de equações do segundo grau. O primeiro foi uma API síncrona, o segundo
-uma arquitetura orientada a eventos e o terceiro uma orquestração de serviços.
-Este quarto checkpoint muda a natureza da tarefa. Em vez de construir mais um
-sistema, ele pede para instrumentar o que já existe com registro estruturado e
-coleta de métricas, comprovar o funcionamento com evidências visuais e, a partir
-dos dados coletados, propor de duas a três otimizações técnicas fundamentadas.
+A disciplina propôs uma sequência de checkpoints voltados a exercitar conceitos
+de arquitetura serverless e orientada a eventos. O problema a ser resolvido com
+código ficou a critério de cada aluno, e o que escolhi foi o cálculo das raízes
+de equações do segundo grau. Mantive o mesmo problema nas três entregas
+anteriores, de modo que a diferença entre elas está inteira na arquitetura: a
+primeira foi uma API síncrona, a segunda uma arquitetura orientada a eventos e a
+terceira uma orquestração de serviços. Este quarto checkpoint muda a natureza da
+tarefa. Em vez de construir mais um sistema, ele pede para instrumentar o que já
+existe com registro estruturado e coleta de métricas, comprovar o funcionamento
+com evidências visuais e, a partir dos dados coletados, propor de duas a três
+otimizações técnicas fundamentadas.
 
 O sistema instrumentado foi o do terceiro checkpoint, e vale descrevê-lo antes
 de falar do que foi feito nele. Uma requisição HTTP chega a uma função que gera
