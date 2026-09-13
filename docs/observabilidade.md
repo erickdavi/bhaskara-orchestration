@@ -259,7 +259,7 @@ estrangula as outras seis.
 
 ### Otimizacao 2 — parar de gravar o payload de cada estado no log da state machine
 
-**Estado: proposta, com o problema medido e o ganho estimado.**
+**Estado: confirmada e medida. Desligada por escolha, com a chave no lugar.**
 
 **O problema.** Volume de log ingerido por 94 execucoes:
 
@@ -270,46 +270,79 @@ estrangula as outras seis.
 
 **Um unico log group responde por 70% da ingestao** — mais que o dobro das sete
 funcoes juntas. A causa esta declarada em `infra/statemachine.tf`:
-
-```hcl
-level                  = "ALL"
-include_execution_data = true
-```
-
-`include_execution_data` grava a **entrada e a saida de cada estado** de cada
-execucao. Com nove estados por execucao, e a equacao inteira viajando no
+`include_execution_data = true` grava a **entrada e a saida de cada estado** de
+cada execucao. Com nove estados por execucao e a equacao inteira viajando no
 payload, sao 18,5 KB por equacao resolvida.
 
-**O ganho.** A US$ 0,50/GB, 100.000 execucoes custariam US$ 0,93 so no log da
-state machine, contra US$ 0,41 das funcoes. Desligar o payload deve derrubar
-esse grupo para a ordem dos eventos sem dado — estimativa de **70% a 85% menos
-bytes**, ou ~US$ 0,70 por 100.000 execucoes.
+**A medicao.** Duas cargas identicas de 30 equacoes com 20% de caos, a segunda
+com o parametro desligado:
 
-**Por que nao foi feita.** Porque a medicao revelou uma dependencia: o painel do
-projeto **usa esse dado**. O handler `status` le `details.output` do log para
-montar a linha do tempo de cada execucao. Desligar `include_execution_data`
-cortaria o custo e a funcionalidade junto.
+| | bytes | execucoes | por execucao | por evento |
+| --- | --- | --- | --- | --- |
+| `include_execution_data = true` | 546.813 | 29 | 18.856 B | 622,1 B |
+| `include_execution_data = false` | 209.824 | 30 | **6.994 B** | **302,8 B** |
 
-**Como fazer sem perder o painel.** O `status` ja tem um segundo caminho: para
-o detalhe de uma execucao especifica ele chama `GetExecutionHistory`, a API
-oficial, que traz entrada e saida sem depender do log. O caminho pelo log
-existe para o **agregado** — contar quantas execucoes passaram por cada estado
-sem fazer N chamadas de API a cada poll de 2 segundos.
+**−63% de bytes por execucao** no log da state machine, ou −51% por evento. No
+sistema inteiro, a ingestao cai de 26,6 KB para 15,1 KB por execucao — **−43%**.
 
-A proposta e separar as duas coisas:
+A US$ 0,50/GB, 100.000 execucoes custariam US$ 0,94 so nesse log group contra
+US$ 0,35 depois. **Cinquenta e nove centavos por 100.000 execucoes** — e o
+numero honesto, e ele e pequeno. O argumento aqui nao e a fatura desta conta: e
+que 43% de um custo que cresce linearmente com o uso desaparece sem que nada
+importante saia junto.
 
-1. `include_execution_data = false`, mantendo `level = ALL` — os eventos de
-   entrada e saida de estado continuam sendo gravados, com o nome do estado,
-   que e o que o agregado do painel conta;
-2. o detalhe por execucao passa a vir exclusivamente de `GetExecutionHistory`,
-   que o codigo **ja implementa**.
+**O que sobrevive, verificado evento a evento.** Esta era a duvida que impedia a
+adocao, e a resposta so podia vir da medicao:
 
-**O que falta para adotar:** confirmar que o evento sem `include_execution_data`
-ainda traz `details.name`. Se nao trouxer, o agregado do painel quebra e a
-otimizacao nao vale o preco. E uma medicao de dez minutos, e nao um palpite —
-mas nao foi feita, e por isso esta otimizacao esta como proposta.
+| campo | usado para | sobrevive? |
+| --- | --- | --- |
+| `details.name` em `StateEntered` / `StateExited` | todos os contadores e o diagrama do painel | **sim** |
+| `details.error` e `details.cause` em `LambdaFunctionFailed` | o motivo da falha na linha do tempo | **sim** |
+| `details.output` em `StateExited` | o texto de detalhe de cada passo (`delta = 49`, `x1=3`) | **nao** |
 
----
+Com o parametro desligado, o `GET /flow` devolveu os contadores completos —
+`Validate` 30/30, `Delta` 30/30 com 3 falhas, `RootsInParallel` 11/11,
+`Persist` 28/28 — e a linha do tempo com estado e duracao de cada passo. Apenas
+o campo `detail` veio vazio, exatamente como previsto.
+
+**O plano B, e uma correcao do que este relatorio dizia antes.** A versao
+anterior deste documento afirmava que o detalhe passaria a vir de
+`GetExecutionHistory`, "que o codigo ja implementa". **Estava errado.** O
+`status` ja fazia a chamada, com `includeExecutionData=True`, mas extraia
+apenas tipo, estado, horario e erro — nunca o `output`. O plano B nao existia;
+existia o meio dele.
+
+A correcao e uma linha, e agora esta no codigo, com quatro testes:
+
+```python
+"detail": summarize(details.get("output")),
+```
+
+Verificado contra a AWS com o log **sem** execution data, o detalhe sob demanda
+voltou inteiro:
+
+```text
+Validate         a=-3 b=-36 c=-60
+Delta            delta = 576
+RootsInParallel  x1=-10  x2=-2
+Persist          gravada
+```
+
+A API nao depende da configuracao de log: ela entrega entrada e saida de
+qualquer jeito. O que muda e **quando** o payload e pago — em toda execucao,
+para sempre, no log; ou so nas execucoes que alguem abre, na API.
+
+**Por que fica desligada mesmo assim.** `var.state_machine_execution_data`
+continua com o padrao `true`, e a razao nao e tecnica: a stack do Checkpoint 3
+esta no ar para correcao, e a linha do tempo agregada do painel — com o detalhe
+inline em cada passo — e parte daquela entrega. Trocar o comportamento dela
+enquanto esta sendo avaliada seria otimizar o artefato errado.
+
+Depois da correcao do CP3, e uma palavra:
+
+```bash
+terraform apply -var 'state_machine_execution_data=false'
+```
 
 ### Otimizacao 3 — colapsar o `Parallel` das raizes num unico estado
 
@@ -376,6 +409,12 @@ anterior.** O boto3 preguicoso foi escrito para economizar; ele custava 6
 segundos. Sem medicao, ele continuaria la, com um comentario explicando por que
 era uma boa ideia.
 
+**Verificar a saida de uma otimizacao vale tanto quanto medir a entrada.** A
+otimizacao 2 dependia de um plano B que este relatorio afirmava ja existir no
+codigo. Existia a chamada de API, nao a extracao do dado — a otimizacao teria
+sido adotada e o painel teria perdido o detalhe em silencio. Quem encontrou foi
+o teste de ponta a ponta contra a AWS, nao a leitura do codigo.
+
 ---
 
 ## 6. O que ficou de fora, e por que
@@ -389,6 +428,10 @@ era uma boa ideia.
 - **Alarme com notificacao ativa.** O topico SNS existe; a inscricao por e-mail
   fica em `var.alert_email`, vazia por padrao, porque exige confirmacao manual
   por link que o Terraform nao completa.
+- **Adotar a otimizacao 2 agora.** Ela esta confirmada e a chave esta no lugar
+  (`var.state_machine_execution_data`), mas o padrao continua `true` enquanto a
+  stack do Checkpoint 3 estiver em correcao: a linha do tempo com detalhe
+  inline e parte daquela entrega.
 - **Aumentar a memoria das funcoes.** Era a candidata 3 original. Depois da
   otimizacao 1, o `persist` quente roda em 14 ms e a memoria de pico e 95 MB de
   128 — aumentar so faria sentido se a duracao ainda fosse dominada por CPU, e

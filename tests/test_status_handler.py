@@ -294,3 +294,88 @@ def gravar(aws, pk, batch):
         "sign": {"S": "positive"},
         "roots": {"L": [{"S": "3.0"}, {"S": "2.0"}]},
     }
+
+
+# ----------------------------------------- o historico oficial de uma execucao
+
+
+class HistoricoFalso:
+    """So o verbo que o `history()` usa, com eventos no formato do boto3."""
+
+    def __init__(self, events):
+        self.events = events
+        self.pedido = None
+
+    def get_execution_history(self, executionArn=None, maxResults=None, includeExecutionData=None):  # noqa: N803
+        self.pedido = {
+            "arn": executionArn,
+            "maxResults": maxResults,
+            "includeExecutionData": includeExecutionData,
+        }
+        return {"events": self.events}
+
+
+@pytest.fixture
+def historico(monkeypatch):
+    def montar(events):
+        duble = HistoricoFalso(events)
+        monkeypatch.setattr(status, "_stepfunctions", duble)
+        return duble
+
+    return montar
+
+
+def saida_de_estado(name, output, timestamp=1789283647):
+    return {
+        "type": "TaskStateExited",
+        "timestamp": timestamp,
+        "stateExitedEventDetails": {"name": name, "output": json.dumps(output)},
+    }
+
+
+def test_o_historico_traz_o_detalhe_de_cada_estado(historico):
+    """Este caminho e o plano B da otimizacao 2 (docs/observabilidade.md).
+
+    Desligar `include_execution_data` tira o payload do **log**, e com ele o
+    detalhe que a linha do tempo agregada mostra. A API `GetExecutionHistory`
+    nao depende dessa configuracao: ela entrega entrada e saida de qualquer
+    jeito. Por isso o detalhe sob demanda tem de sair daqui — e este teste e o
+    que garante que ele sai.
+    """
+    historico([
+        saida_de_estado("Delta", {"delta": {"value": 49, "sign": "positive"}}),
+        saida_de_estado("Persist", {"persisted": {"duplicate": False}}),
+    ])
+
+    passos = status.history(ARN)["steps"]
+
+    assert passos[0]["state"] == "Delta"
+    assert passos[0]["detail"] == "delta = 49"
+    assert passos[1]["detail"] == "gravada"
+
+
+def test_o_historico_pede_os_dados_de_execucao_explicitamente(historico):
+    # Sem includeExecutionData a API omite entrada e saida, e o plano B da
+    # otimizacao 2 deixaria de existir sem que nada quebrasse visivelmente.
+    duble = historico([])
+
+    status.history(ARN)
+
+    assert duble.pedido["includeExecutionData"] is True
+    assert duble.pedido["arn"] == ARN
+
+
+def test_estado_sem_saida_nao_inventa_detalhe(historico):
+    historico([{"type": "TaskStateEntered", "timestamp": 1, "stateEnteredEventDetails": {"name": "Validate"}}])
+
+    assert status.history(ARN)["steps"][0]["detail"] is None
+
+
+def test_o_historico_preserva_o_erro(historico):
+    historico([{
+        "type": "LambdaFunctionFailed",
+        "timestamp": 1,
+        "taskFailedEventDetails": {"error": "TransientFailure", "cause": "falha simulada"},
+    }])
+
+    assert status.history(ARN)["steps"][0]["error"] == "TransientFailure"

@@ -39,8 +39,14 @@ resource "aws_sfn_state_machine" "flow" {
     # ALL, e nao ERROR: o painel conta quantas execucoes passaram por cada
     # estado, e isso vem dos eventos de entrada e saida de estado. Com ERROR o
     # diagrama so acenderia quando algo desse errado.
-    level                  = "ALL"
-    include_execution_data = true
+    level = "ALL"
+
+    # Ver a otimizacao 2 em docs/observabilidade.md e a medicao em
+    # docs/cycle-13.md. Este e o parametro mais caro do projeto em ingestao de
+    # log; o valor padrao continua `true` porque o painel depende do que ele
+    # grava, e a variavel existe para que a troca seja uma linha e nao um
+    # garimpo.
+    include_execution_data = var.state_machine_execution_data
   }
 
   tracing_configuration {

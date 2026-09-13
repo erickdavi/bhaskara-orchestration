@@ -440,6 +440,14 @@ def history(execution_arn):
                 "state": details.get("name"),
                 "at": timestamp_ms(entry.get("timestamp")),
                 "error": details.get("error"),
+                # O `detail` sai daqui, e nao do log, de proposito. Este e o
+                # caminho que sobrevive a `include_execution_data = false` — a
+                # API traz entrada e saida independentemente do que a state
+                # machine grava no CloudWatch. Ver a otimizacao 2 em
+                # docs/observabilidade.md: o log e 70% da ingestao justamente
+                # por carregar este payload em toda execucao, quando so as
+                # execucoes que alguem abre precisam dele.
+                "detail": summarize(details.get("output")),
             }
         )
 

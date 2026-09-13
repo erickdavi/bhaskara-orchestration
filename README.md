@@ -833,10 +833,12 @@ real e uma API Gateway inteira a mais para manter.
 projeto que é cobrada por existir, e não por uso. Ver a
 [correção na seção de custos](#uma-correção-do-checkpoint-3).
 
-**A otimização 2 não foi verificada até o fim.** A proposta de desligar
-`include_execution_data` depende de o evento de estado continuar trazendo
-`details.name` sem o payload. É uma medição de dez minutos que não foi feita —
-por isso ela está no relatório como proposta, e não como resultado.
+**A timeline agregada perde o detalhe se `state_machine_execution_data` for
+desligada.** A variável corta 63% do log da state machine e todos os contadores
+do painel sobrevivem — mas o texto de cada passo (`delta = 49`) passa a vir só
+ao abrir a execução, via `GetExecutionHistory`. Medido em
+[`docs/cycle-13.md`](docs/cycle-13.md). O padrão continua ligado enquanto o
+Checkpoint 3 estiver em correção.
 
 **O `log_format = "JSON"` das funções não filtra o log da aplicação.** O
 `application_log_level` só se aplica ao que sai pelo módulo `logging`, e o
@@ -875,3 +877,4 @@ Os ciclos 1 a 7 são o Checkpoint 3; do 8 em diante, o Checkpoint 4.
 | [10](docs/cycle-10.md) | X-Ray, e uma decisão do CP3 revertida por escrito |
 | [11](docs/cycle-11.md) | dashboard, alarmes e consultas como código |
 | [12](docs/cycle-12.md) | a carga real, e a otimização que ela obrigou |
+| [13](docs/cycle-13.md) | a otimização 2 confirmada contra a AWS, e o plano B que não existia |

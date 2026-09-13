@@ -55,19 +55,27 @@ de 632 ms para 87 ms (7,3x), latencia ponta a ponta p95 de 7.890 ms para
 sumiu: 417 ms migraram para o init, que e onde custam menos.
 
 **2. Parar de gravar o payload de cada estado no log da state machine —
-PROPOSTA.** A consulta de volume mostrou que um unico log group responde por
-**70% de toda a ingestao**: 1.741.065 bytes contra 762.875 das sete funcoes
-somadas, ou 18,5 KB por execucao contra 8,1 KB de todas as Lambdas juntas. A
-causa e `include_execution_data = true` na configuracao de log da state machine,
-que grava entrada e saida de cada um dos nove estados. Desligar reduziria esse
-grupo em 70% a 85%. Nao foi aplicada porque a propria medicao revelou uma
-dependencia: o painel do projeto le `details.output` desse log para montar a
-linha do tempo. A proposta e desligar o payload mantendo `level = ALL` (os
-eventos de estado continuam, e sao eles que o agregado do painel conta) e passar
-o detalhe por execucao a vir de `GetExecutionHistory`, a API oficial, que o
-codigo ja implementa para outro caminho. Falta confirmar que o evento sem
-payload ainda traz o nome do estado — e uma verificacao de dez minutos, e nao um
-palpite, mas nao foi feita, e por isso a otimizacao esta como proposta.
+CONFIRMADA E MEDIDA, desligada por escolha.** A consulta de volume mostrou que
+um unico log group responde por **70% de toda a ingestao**: 1.741.065 bytes
+contra 762.875 das sete funcoes somadas, ou 18,5 KB por execucao contra 8,1 KB
+de todas as Lambdas juntas. A causa e `include_execution_data = true` na
+configuracao de log da state machine, que grava entrada e saida de cada um dos
+nove estados. Medido com duas cargas identicas de 30 equacoes, a segunda com o
+parametro desligado: **18.856 bytes por execucao caem para 6.994** (−63% nesse
+log group, −43% na ingestao total do sistema). Verificado evento a evento o que
+sobrevive: `details.name` continua em `StateEntered` e `StateExited`, entao
+todos os contadores e o diagrama do painel funcionam; `details.error` e
+`details.cause` continuam em `LambdaFunctionFailed`, entao o motivo da falha
+continua visivel. Perde-se apenas `details.output`, o texto de detalhe de cada
+passo. Esse detalhe passa a vir de `GetExecutionHistory`, que nao depende da
+configuracao de log — e aqui houve uma correcao no proprio projeto: o handler
+ja fazia a chamada, mas nunca extraia o `output`, entao o plano B nao existia de
+fato. Foi implementado (uma linha, quatro testes) e verificado contra a AWS com
+o log ja sem execution data. A otimizacao fica **desligada** mesmo assim, com a
+chave pronta em `var.state_machine_execution_data`: a stack do Checkpoint 3
+esta no ar para correcao, e a linha do tempo com detalhe inline e parte daquela
+entrega — trocar o comportamento dela enquanto esta sendo avaliada seria
+otimizar o artefato errado.
 
 **3. Colapsar o `Parallel` das raizes num unico estado — PROPOSTA
 QUALIFICADA.** Com Δ > 0 o fluxo abre dois ramos concorrentes, um por raiz. A

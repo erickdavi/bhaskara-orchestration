@@ -171,6 +171,12 @@ variable "xray_enabled" {
   default     = true
 }
 
+variable "state_machine_execution_data" {
+  description = "Grava a entrada e a saida de cada estado no log da state machine. Ligado, e responsavel por ~70% de toda a ingestao de log do projeto (18,5 KB por execucao contra 8,1 KB das sete funcoes somadas). Ver a otimizacao 2 em docs/observabilidade.md."
+  type        = bool
+  default     = true
+}
+
 variable "alert_email" {
   description = "E-mail inscrito no topico de alertas. Vazio por padrao: a inscricao exige confirmacao manual por link, que o Terraform nao consegue completar, e o recurso ficaria pendente para sempre no state de quem so quisesse ver o alarme mudar de cor no console."
   type        = string
