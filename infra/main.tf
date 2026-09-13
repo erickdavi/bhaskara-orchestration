@@ -25,6 +25,11 @@ locals {
 
   state_machine_name = "${local.name_prefix}-flow"
 
+  # Namespace das metricas de negocio. O mesmo valor esta em
+  # src/shared/metrics.py — la ele e escrito no bloco EMF, aqui ele e lido
+  # pelo dashboard e pelos alarmes.
+  metrics_namespace = "Bhaskara/Orchestration"
+
   # ARN montado a mao, e nao lido do recurso, para quebrar um ciclo: a state
   # machine precisa dos ARNs das funcoes (para invoca-las) e o dispatcher
   # precisa do ARN dela (para inicia-la). O nome e deterministico, entao o ARN

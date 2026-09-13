@@ -58,3 +58,23 @@ output "dashboard_url" {
   description = "O painel. Abra, cole a chave de API e dispare uma carga."
   value       = "https://${aws_cloudfront_distribution.dashboard.domain_name}"
 }
+
+output "cloudwatch_dashboard_url" {
+  description = "O painel de operacao no console: latencia, erro, custo e saturacao."
+  value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards/dashboard/${aws_cloudwatch_dashboard.observability.dashboard_name}"
+}
+
+output "xray_service_map_url" {
+  description = "O service map do X-Ray, com o pipeline inteiro ponta a ponta."
+  value       = "https://${var.aws_region}.console.aws.amazon.com/xray/home?region=${var.aws_region}#/service-map"
+}
+
+output "logs_insights_url" {
+  description = "O Logs Insights, com as cinco consultas salvas ja disponiveis na lista."
+  value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#logsV2:logs-insights"
+}
+
+output "alerts_topic_arn" {
+  description = "Topico SNS dos cinco alarmes. Sem inscricao por padrao; ver a variavel alert_email."
+  value       = aws_sns_topic.alerts.arn
+}

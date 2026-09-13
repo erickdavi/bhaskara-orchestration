@@ -171,6 +171,30 @@ variable "xray_enabled" {
   default     = true
 }
 
+variable "alert_email" {
+  description = "E-mail inscrito no topico de alertas. Vazio por padrao: a inscricao exige confirmacao manual por link, que o Terraform nao consegue completar, e o recurso ficaria pendente para sempre no state de quem so quisesse ver o alarme mudar de cor no console."
+  type        = string
+  default     = ""
+}
+
+variable "failed_executions_threshold" {
+  description = "Execucoes falhas em 5 minutos que disparam o alarme. Acima de zero de proposito: o modo caos faz o sistema falhar por projeto, e um alarme que dispara na demonstracao ensina a ignora-lo."
+  type        = number
+  default     = 5
+}
+
+variable "throttle_threshold" {
+  description = "Throttles somados em 5 minutos que disparam o alarme. A conta tem 10 execucoes concorrentes no total; alguma contencao e esperada em carga."
+  type        = number
+  default     = 20
+}
+
+variable "queue_age_threshold_seconds" {
+  description = "Idade da mensagem mais antiga na orders que dispara o alarme. Cinco minutos: acima disso a fila nao esta drenando, esta parada."
+  type        = number
+  default     = 300
+}
+
 variable "tags" {
   description = "Tags adicionais aplicadas a todos os recursos."
   type        = map(string)
