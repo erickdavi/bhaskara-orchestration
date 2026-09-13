@@ -1,22 +1,35 @@
-# Checkpoint 3 — Orquestração e composição de serviços
+# Checkpoints 3 e 4 — orquestração, e a observabilidade dela
 
 Uma equação do segundo grau entra por uma fila, atravessa **cinco funções
 Lambda cuja ordem está declarada em YAML**, e sai gravada — ou recusada, com o
 motivo anexado. A orquestração é feita pelo **AWS Step Functions**; um painel
-web mostra o fluxo acontecendo, estado por estado.
+web mostra o fluxo acontecendo, estado por estado. Cada passo desse caminho é
+**medido**: log estruturado com correlação, métricas de negócio, traço
+distribuído, dashboard e alarmes.
 
-> **Checkpoint 3 — orquestração.** O [Checkpoint 1](https://github.com/erickdavi/bhaskara-api)
-> é uma API serverless **síncrona** e o [Checkpoint 2](https://github.com/erickdavi/bhaskara-events)
-> é uma arquitetura **orientada a eventos**. Este projeto é independente dos
-> dois: a mesma regra de negócio, uma composição completamente diferente ao
-> redor dela.
+> **Este repositório carrega duas entregas.**
+>
+> O **Checkpoint 3 — orquestração** é o sistema: Step Functions compondo cinco
+> Lambdas a partir de um YAML versionado. O estado exato entregue nele está na
+> tag [`cp3-entrega`](https://github.com/erickdavi/bhaskara-orchestration/tree/cp3-entrega).
+>
+> O **Checkpoint 4 — observabilidade** instrumentou esse mesmo pipeline, como o
+> enunciado pede — ele não pede um sistema novo, pede para instrumentar o que já
+> existe. O relatório com a análise de performance, de custo e as três
+> otimizações está em **[`docs/observabilidade.md`](docs/observabilidade.md)**,
+> as evidências em [`docs/evidencias/`](docs/evidencias/) e os números medidos
+> em [`docs/evidencias/medicoes.md`](docs/evidencias/medicoes.md).
+>
+> O [Checkpoint 1](https://github.com/erickdavi/bhaskara-api) é uma API
+> serverless **síncrona** e o [Checkpoint 2](https://github.com/erickdavi/bhaskara-events)
+> é uma arquitetura **orientada a eventos**, cada um em seu repositório.
 
 ```bash
 git clone https://github.com/erickdavi/bhaskara-orchestration.git
 cd bhaskara-orchestration
 ./run.sh demo          # o fluxo inteiro no terminal, sem AWS
 ./run.sh web           # o painel em http://localhost:8000, sem AWS
-./run.sh               # 258 testes, sem AWS
+./run.sh               # 329 testes, sem AWS
 ```
 
 ## Provedor utilizado
@@ -43,6 +56,7 @@ fluxo é escrita em **YAML**, como pedido, e convertida para JSON no `apply`.
 - [Validando pela linha de comando](#validando-pela-linha-de-comando)
 - [Rodando contra serviços AWS emulados](#rodando-contra-serviços-aws-emulados)
 - [Testes](#testes)
+- [Observabilidade](#observabilidade)
 - [Segurança](#segurança)
 - [Custos](#custos)
 - [Limpeza](#limpeza)
@@ -338,7 +352,9 @@ bhaskara-orchestration/
 │   │   ├── quadratic.py           # adaptadores: discriminante e uma raiz
 │   │   ├── chaos.py               # falha injetada determinística
 │   │   ├── idempotency.py         # a chave, num lugar só
-│   │   └── api_auth.py            # verificação da chave de API
+│   │   ├── api_auth.py            # verificação da chave de API
+│   │   ├── observability.py       # o envelope canônico de log
+│   │   └── metrics.py             # o bloco EMF e a regra de cardinalidade
 │   └── handlers/                  # um diretório por função Lambda
 │       ├── submit/                # POST /orders  ->  fila
 │       ├── dispatcher/            # fila  ->  StartExecution
@@ -350,11 +366,16 @@ bhaskara-orchestration/
 │   ├── runtime.py                 # liga a definição aos handlers reais
 │   ├── simulator.py               # a demonstração de terminal
 │   └── server.py                  # o painel local
-├── tests/                         # 258 casos, nenhum toca a AWS
-├── infra/                         # Terraform — 57 recursos
+├── tests/                         # 329 casos, nenhum toca a AWS
+├── infra/                         # Terraform — 71 recursos
 ├── web/                           # o painel publicado no S3
 ├── scripts/                       # publicar na fila, executar, renderizar, LocalStack
-└── docs/                          # especificação e uma nota por ciclo
+└── docs/
+    ├── observabilidade.md         # o relatório do Checkpoint 4
+    ├── entrega-canvas.md          # o texto da entrega, pronto para colar
+    ├── evidencias/                # os prints e os números medidos
+    ├── especificacao.md           # CP3 · especificacao-cp4.md — CP4
+    └── cycle-NN.md                # uma nota por ciclo
 ```
 
 ### Sobre `calculator.py`
@@ -382,6 +403,11 @@ sem prefixo de pacote. `conftest.py` e `local/paths.py` reproduzem esse mesmo
 | `delta`, `root` | `handler.py`, `chaos.py`, `quadratic.py`, `calculator.py` |
 | `persist` | `handler.py`, `chaos.py` |
 | `status` | `handler.py`, `api_auth.py` |
+| **todas** | `observability.py`, `metrics.py` |
+
+As duas últimas são a única exceção à regra de "cada função leva só o que
+importa": as sete emitem log, e o envelope só vale se for literalmente o mesmo
+código nas sete.
 
 ## Implantando na AWS
 
@@ -506,7 +532,7 @@ tempo e estouram o timeout de startup, e as mensagens somem sem log.
 
 ## Testes
 
-**258 casos, nenhum toca a AWS.** Os clientes boto3 são substituídos por dublês
+**329 casos, nenhum toca a AWS.** Os clientes boto3 são substituídos por dublês
 em uma fixture `autouse`, para que um teste que a esquecesse não escrevesse numa
 tabela de verdade.
 
@@ -529,6 +555,9 @@ tabela de verdade.
 | `test_status_handler.py` | 25 | agregação dos eventos, timeline, espiada na dead-letter |
 | `test_generator.py` | 15 | distribuição da carga, invalidas, duplicatas, caos |
 | `test_local_simulator.py` | 10 | a contabilidade da demonstração fecha |
+| `test_observability.py` | 21 | o envelope de log: campos, níveis, cold start, duração |
+| `test_metrics.py` | 25 | a forma do EMF e a **regra de cardinalidade** |
+| `test_handler_telemetry.py` | 24 | o que cada um dos sete handlers mede |
 
 Alguns testes existem para proteger **acoplamentos que não são óbvios**:
 
@@ -536,7 +565,103 @@ Alguns testes existem para proteger **acoplamentos que não são óbvios**:
   a demonstração local passaria a mentir sobre o que roda na nuvem;
 * todo estado da ASL precisa ter nó no painel (ou estar numa lista de exceções
   com justificativa) — renomear um estado apagaria um nó em silêncio;
-* o retrier do erro permanente precisa vir antes do genérico.
+* o retrier do erro permanente precisa vir antes do genérico;
+* **nenhum handler pode usar identificador como dimensão de métrica** — um
+  `execution` ali criaria uma série temporal por equação processada, cobrada
+  por mês. O teste percorre os seis handlers de uma vez, para que um handler
+  novo que esqueça a regra falhe aqui e não na fatura.
+
+## Observabilidade
+
+Entrega do **Checkpoint 4**. O relatório completo — análise de performance, de
+custo e as três otimizações, todas com número medido — está em
+**[`docs/observabilidade.md`](docs/observabilidade.md)**.
+
+### Toda linha de log tem a mesma forma
+
+```json
+{"event": "delta_calculated", "level": "INFO", "service": "delta", "state": "Delta",
+ "execution": "9c1d4f…", "batch_id": "b-fbc1be…", "attempt": 1,
+ "cold_start": false, "duration_ms": 0.024, "value": 1, "sign": "positive"}
+```
+
+O campo que faz o resto valer é o `execution` — a chave de idempotência, que
+acompanha a equação pelos cinco estados. Filtrar por ele devolve o caminho
+inteiro de uma equação, incluindo as tentativas que falharam:
+
+```bash
+aws logs start-query \
+  --log-group-names $(terraform -chdir=infra output -json function_names \
+                      | jq -r '.[] | "/aws/lambda/" + .' | tr '\n' ' ') \
+  --start-time $(( $(date +%s) - 3600 )) --end-time $(date +%s) \
+  --query-string 'fields @timestamp, service, state, event, level, attempt, duration_ms
+                  | filter execution = "COLE-A-CHAVE" | sort @timestamp asc'
+```
+
+A mesma consulta está salva no Logs Insights pelo Terraform, junto com outras
+quatro — duração por estado, cold start, motivos de recusa e volume de log.
+Uma query que existe só no histórico do navegador de quem a escreveu não é
+observabilidade.
+
+### As métricas são o próprio log
+
+Onze métricas em **Embedded Metric Format**: a métrica vai escrita na linha de
+log e o CloudWatch a extrai do lado dele. Nenhuma chamada de API no caminho
+quente, nenhuma permissão IAM a mais, nenhum erro de telemetria para tratar
+dentro da regra de negócio.
+
+| Métrica | Responde |
+| --- | --- |
+| `EquationsSubmitted`, `ExecutionsStarted` | volume de entrada |
+| `ExecutionsDeduplicated`, `PersistDuplicate` | as duas camadas de idempotência |
+| `EquationsByDeltaSign` | a distribuição dos três ramos do `Choice` |
+| `ValidationRejected` | por que uma equação é recusada |
+| `HandlerDuration` | p50/p95/p99 por estado |
+| `EndToEndLatency` | da fila até a gravação |
+| `ColdStart`, `RetryAttempt` | o que o caminho frio e a reentrega custam |
+| `ChaosInjected` | separa a falha pedida da falha real |
+| `UnauthorizedRequests` | 403 no access log da API |
+
+**Nenhum identificador é dimensão.** `execution`, `batch_id` e `request_id`
+ficam na linha como campo — pesquisáveis, sem virar série temporal. Um id como
+dimensão criaria uma métrica nova por equação processada, cobrada por mês. Há
+teste que falha se alguém tentar.
+
+### O painel, os alarmes e o traço
+
+```bash
+terraform -chdir=infra output -raw cloudwatch_dashboard_url
+terraform -chdir=infra output -raw xray_service_map_url
+```
+
+Um dashboard com dez widgets em cinco faixas — entrada, latência, falha e
+saturação, o que a AWS mede sozinha, e um widget de log que fecha o ciclo do
+gráfico para a linha. Cinco alarmes, cada um com a ação escrita na descrição,
+que é o que chega no e-mail. X-Ray ativo nas sete funções e na state machine.
+
+Tudo em Terraform, em [`infra/observability.tf`](infra/observability.tf). Um
+painel montado à mão no console é configuração que existe num lugar só, que
+ninguém revisa e que desaparece com a conta.
+
+### O que ela encontrou
+
+A instrumentação pagou por si na primeira carga real. A duração do estado
+`Persist` deu p50 de 13 ms e **p95 de 5.939 ms**; separando invocação fria de
+quente, a cauda inteira estava nas frias. O `initDurationMs` era de 83 ms — os
+seis segundos aconteciam dentro do handler, no cliente `boto3` criado de forma
+preguiçosa na primeira invocação, com a CPU racionada de uma função de 128 MB.
+
+Corrigido e medido de novo, com a mesma carga:
+
+| | Antes | Depois | |
+| --- | --- | --- | --- |
+| `persist` frio, no handler | 5.972 ms | 243 ms | **24×** |
+| Latência ponta a ponta, p95 | 7.890 ms | 3.120 ms | **−60%** |
+| `submit`, primeira requisição | 2.833 ms | 309 ms | **9,2×** |
+
+As outras duas otimizações — o log da state machine, que é 70% da ingestão, e o
+`Parallel` que gasta duas invocações para 60 microssegundos de conta — estão no
+relatório, com o número e com o motivo de não terem sido aplicadas.
 
 ## Segurança
 
@@ -633,11 +758,28 @@ do event source mapping.
 | SQS | ~250 requests | free tier |
 | DynamoDB on-demand | ~100 writes | free tier |
 | CloudFront + S3 | o painel | < US$ 0,01 |
+| CloudWatch Logs | 2,5 MB ingeridos numa carga de 120 | free tier (5 GB/mês) |
+| X-Ray | ~100 traces | free tier (100.000/mês) |
 | **Total por demonstração** | | **≈ US$ 0,02 – 0,05** |
 
-Nenhum recurso tem custo fixo. O padrão do painel é **50 equações**, e não
-1.000: com uma execução por equação, a **transição de estado** é a unidade de
-custo.
+O padrão do painel é **50 equações**, e não 1.000: com uma execução por
+equação, a **transição de estado** é a unidade de custo.
+
+### Uma correção do Checkpoint 3
+
+Até o Checkpoint 3 este README afirmava que **nenhum recurso tem custo fixo**.
+Depois do Checkpoint 4 isso deixou de ser verdade, e a frase saiu daqui em vez
+de continuar por inércia.
+
+As **24 séries de métrica customizada** são cobradas por mês, e não por uso:
+US$ 0,30 cada acima das 10 gratuitas, ou **US$ 4,20/mês** se todas receberem
+dado o mês inteiro. Dashboard (3 gratuitos), alarmes (10 gratuitos), X-Ray e a
+ingestão de log de uma demonstração continuam na camada gratuita.
+
+Esse número é o teto. A documentação da AWS indica que métrica customizada é
+cobrada proporcionalmente às horas em que recebe dado, e um laboratório só
+publica durante as demonstrações — mas isso não foi conferido na fatura, então
+o valor acima é o que se deve assumir. `terraform destroy` zera tudo.
 
 ## Limpeza
 
@@ -646,7 +788,7 @@ cd infra
 terraform destroy
 ```
 
-Remove os 57 recursos, inclusive os log groups (criados pelo Terraform
+Remove os 71 recursos, inclusive os log groups (criados pelo Terraform
 justamente para que o `destroy` os leve junto) e os objetos do painel
 (`force_destroy` no bucket).
 
@@ -662,7 +804,16 @@ transforma throttling em espera. Cargas grandes drenam devagar, de propósito.
 **Uma Lambda por raiz é decisão de demonstração, não de otimização.** Calcular
 duas raízes não justifica duas invocações; o custo de rede entre os ramos é
 maior que a conta que eles fazem. O que se ganha é ver o `Parallel` funcionando,
-que é o objeto deste checkpoint.
+que é o objeto do Checkpoint 3.
+
+> O Checkpoint 4 mediu o quanto isso custa, e o número é maior do que a frase
+> acima sugeria: `RootX1` e `RootX2` têm p50 de **0,031 ms**, e o fluxo gasta
+> duas invocações de 9 ms cobrados, três transições de state machine e dois
+> slots do teto de 10 execuções concorrentes para fazer 60 microssegundos de
+> aritmética. Está quantificado em
+> [`docs/observabilidade.md`](docs/observabilidade.md) como otimização 3, com a
+> recomendação de colapsar em produção e manter aqui — apagar o `Parallel`
+> destruiria a evidência do Checkpoint 3.
 
 **No LocalStack, o erro permanente é reentregue 3 vezes.** O nome do erro que a
 state machine recebe de uma exceção Python deveria ser o `errorType`
@@ -678,6 +829,22 @@ dedicado com política restrita. Fica registrado como débito, não escondido.
 leitura anterior", com 2 segundos de granularidade. Um WebSocket daria tempo
 real e uma API Gateway inteira a mais para manter.
 
+**As 24 séries de métrica são custo fixo mensal.** É a única coisa neste
+projeto que é cobrada por existir, e não por uso. Ver a
+[correção na seção de custos](#uma-correção-do-checkpoint-3).
+
+**A otimização 2 não foi verificada até o fim.** A proposta de desligar
+`include_execution_data` depende de o evento de estado continuar trazendo
+`details.name` sem o payload. É uma medição de dez minutos que não foi feita —
+por isso ela está no relatório como proposta, e não como resultado.
+
+**O `log_format = "JSON"` das funções não filtra o log da aplicação.** O
+`application_log_level` só se aplica ao que sai pelo módulo `logging`, e o
+envelope sai por `print()` — de propósito, porque o `logging` transforma o
+dicionário em repr do Python dentro de um campo `message` e destrói a consulta
+por campo. O ganho do formato JSON aqui é sobre as linhas da plataforma, não
+sobre as nossas. Medido em [`docs/cycle-08.md`](docs/cycle-08.md).
+
 **A linha do tempo tem a latência do CloudWatch.** Os eventos do fluxo são
 lidos do log da state machine, e a ingestão leva alguns segundos. Durante uma
 carga em andamento é normal ver uma execução com um passo faltando ou ainda
@@ -688,8 +855,11 @@ detalhe de uma execução usa.
 ## Decisões de arquitetura
 
 Cada ciclo de desenvolvimento tem uma nota em [`docs/`](docs/), com o que foi
-decidido e por quê. A especificação completa está em
-[`docs/especificacao.md`](docs/especificacao.md).
+decidido e por quê. As especificações completas estão em
+[`docs/especificacao.md`](docs/especificacao.md) (Checkpoint 3) e
+[`docs/especificacao-cp4.md`](docs/especificacao-cp4.md) (Checkpoint 4).
+
+Os ciclos 1 a 7 são o Checkpoint 3; do 8 em diante, o Checkpoint 4.
 
 | Ciclo | Entrega |
 | --- | --- |
@@ -700,3 +870,8 @@ decidido e por quê. A especificação completa está em
 | [5](docs/cycle-05.md) | borda HTTP, fila, dispatcher e infraestrutura |
 | [6](docs/cycle-06.md) | GET /flow e o painel ao vivo |
 | [7](docs/cycle-07.md) | LocalStack, README e entrega |
+| [8](docs/cycle-08.md) | o envelope canônico de log, e o formato decidido por medição |
+| [9](docs/cycle-09.md) | métricas de negócio em EMF, e a regra de cardinalidade |
+| [10](docs/cycle-10.md) | X-Ray, e uma decisão do CP3 revertida por escrito |
+| [11](docs/cycle-11.md) | dashboard, alarmes e consultas como código |
+| [12](docs/cycle-12.md) | a carga real, e a otimização que ela obrigou |
