@@ -1,349 +1,289 @@
-# Observabilidade — Checkpoint 4
+# Observabilidade do pipeline — Checkpoint 4
 
-## Resumo
+## Introdução
 
-O sistema do Checkpoint 3 recebe equações do segundo grau por uma fila e as
-resolve numa esteira de cinco funções na AWS. Ele funcionava, mas ninguém
-conseguia ver o que estava acontecendo lá dentro enquanto rodava. Este
-checkpoint instalou essa visibilidade.
+A disciplina propôs uma sequência de checkpoints em que cada entrega monta uma
+arquitetura serverless diferente ao redor do mesmo problema, o cálculo das
+raízes de equações do segundo grau. O primeiro foi uma API síncrona, o segundo
+uma arquitetura orientada a eventos e o terceiro uma orquestração de serviços.
+Este quarto checkpoint muda a natureza da tarefa. Em vez de construir mais um
+sistema, ele pede para instrumentar o que já existe com registro estruturado e
+coleta de métricas, comprovar o funcionamento com evidências visuais e, a partir
+dos dados coletados, propor de duas a três otimizações técnicas fundamentadas.
 
-A instalação valeu a pena logo na primeira medição séria. Uma das funções
-estava levando quase seis segundos para fazer um trabalho que leva treze
-milésimos de segundo, e isso vinha acontecendo desde o checkpoint anterior sem
-que aparecesse em lugar nenhum. Depois de descobrir a causa e corrigir, a
-demora que um usuário sentiria caiu 60% no pior caso.
+O sistema instrumentado foi o do terceiro checkpoint, e vale descrevê-lo antes
+de falar do que foi feito nele. Uma requisição HTTP chega a uma função que gera
+a quantidade pedida de equações e as publica numa fila. Outra função consome
+essa fila e transforma cada mensagem numa execução de uma máquina de estados do
+Step Functions, cuja ordem está declarada em um arquivo YAML versionado junto
+com o código. Dentro dessa máquina, cinco funções Lambda trabalham em sequência:
+uma valida os coeficientes, outra calcula o discriminante, uma decisão escolhe o
+caminho conforme o sinal desse discriminante, uma ou duas funções calculam as
+raízes e a última grava o resultado num banco DynamoDB. O que falha de forma
+irrecuperável vai para uma fila de mensagens recusadas com o motivo anexado. Um
+painel web acompanha tudo isso acontecendo.
 
-O documento conta como isso foi descoberto, o que mais os números mostraram, e
-o que ficou proposto para depois.
+O sistema funcionava, mas era opaco por dentro. Havia registro de log, embora
+cada função escrevesse do seu jeito, e não havia métrica alguma além das que a
+AWS emite por conta própria, que contam invocações e erros sem saber o que é uma
+equação. A construção da observabilidade seguiu quatro caminhos, tratados nos
+parágrafos seguintes: padronizar o formato do log de modo que uma equação possa
+ser rastreada por todas as etapas, extrair medidas de negócio do próprio log,
+ligar o rastreamento distribuído que o checkpoint anterior havia deixado
+desligado, e reunir tudo num painel com alarmes. Os dados que esses quatro
+caminhos produziram sustentaram as três otimizações apresentadas na sequência,
+sendo que a primeira delas revelou um problema de desempenho que existia desde
+o checkpoint anterior sem que ninguém tivesse como perceber.
 
-Os dados brutos estão em [`evidencias/medicoes.md`](evidencias/medicoes.md).
+## Desenvolvimento
+
+### O formato único de log
+
+O primeiro caminho foi padronizar o que cada função escreve. Antes deste
+checkpoint, as sete funções do sistema tinham cada uma a sua própria rotina de
+registro, e cada chamada escolhia os campos que achava relevantes: a função de
+validação gravava o identificador da execução, a que consome a fila gravava o
+identificador do lote, e as de cálculo não gravavam nenhum dos dois. Reconstituir
+o caminho de uma equação exigia saber de cor qual campo cada função usava. A
+solução foi um módulo compartilhado que monta um envelope fixo, presente em toda
+linha, com o nome do evento, o nível de severidade, a função que escreveu, a
+etapa do fluxo em que ela estava, o identificador da equação, o do lote, o número
+da tentativa, se aquela invocação precisou inicializar do zero e quanto tempo
+decorreu. Nenhum desses campos precisou ser inventado, porque todos já
+trafegavam no sistema; a mudança foi passar a registrá-los.
+
+O ganho aparece quando se filtra o log por uma equação específica. A consulta
+abaixo tem uma condição só e devolve as nove linhas que uma única equação
+produziu ao atravessar cinco funções diferentes, incluindo as duas tentativas
+que falharam no meio do caminho e a recuperação na terceira.
+
+![Rastro de uma equação pelo identificador](evidencias/03-logs-insights-rastro-de-uma-equacao.png)
+
+Lendo de cima para baixo, a equação entrou no fluxo, foi validada, falhou duas
+vezes no cálculo do discriminante por causa do modo de injeção de falhas que o
+sistema usa para demonstrar a recuperação, foi refeita na terceira tentativa,
+teve as duas raízes calculadas em paralelo e foi gravada. O número da tentativa
+subindo de zero a dois é o que torna a recuperação visível, e o nome da etapa é
+o que permite distinguir as duas metades do cálculo paralelo, já que a mesma
+função atende as duas e sem esse campo as linhas seriam idênticas.
+
+### As métricas de negócio
+
+O segundo caminho foi extrair medidas do próprio log. A AWS já contava
+invocações, erros e duração de cada função, mas nenhuma dessas contagens sabe o
+que é uma equação, quantas foram recusadas por coeficiente inválido ou quantas
+caíram em cada um dos três caminhos possíveis do cálculo. Foram criadas onze
+medidas de negócio: equações submetidas, execuções iniciadas, execuções
+descartadas por já terem sido processadas, duplicatas barradas na gravação,
+distribuição pelos três ramos do discriminante, recusas separadas por motivo,
+duração por etapa, latência da fila até o resultado, invocações que precisaram
+inicializar, invocações que são repetição e falhas injetadas de propósito.
+
+A escolha técnica que vale explicar é como essas medidas chegam à AWS. O caminho
+convencional seria cada função chamar a API de métricas a cada número que
+quisesse registrar, o que acrescentaria uma chamada de rede a toda invocação,
+consumiria parte do tempo disponível e criaria mais um ponto de falha dentro da
+regra de negócio. O caminho adotado escreve a métrica dentro da própria linha de
+log, num formato que a AWS lê depois por conta própria. O custo em tempo dentro
+da função é zero e nenhuma permissão adicional foi necessária. Como efeito
+colateral útil, a linha que virou um ponto no gráfico carrega também o
+identificador da equação, então de um pico no painel se chega às execuções que o
+causaram.
+
+Houve uma restrição de custo que moldou o desenho. Uma métrica na AWS é cobrada
+por combinação de valores dos seus rótulos, o que significa que usar o
+identificador da equação como rótulo criaria uma série temporal nova a cada
+equação processada, com cobrança mensal por cada uma. A primeira versão do
+projeto criava 45 séries, o que daria US$ 13,50 por mês. Cortando os rótulos que
+não se pagavam, o número caiu para 24, e existe um teste automatizado que falha
+se alguém tentar usar um identificador como rótulo no futuro.
+
+### O rastreamento distribuído
+
+O terceiro caminho foi ligar o AWS X-Ray, que desenha o percurso de uma
+requisição por todos os componentes e mostra o tempo gasto em cada um. O
+checkpoint anterior havia deixado esse recurso desligado, com uma justificativa
+registrada no próprio arquivo de infraestrutura: o histórico de execução do Step
+Functions já mostrava tudo que interessava naquele momento, e o rastreamento é
+cobrado por requisição registrada. A justificativa era boa para a pergunta
+daquele checkpoint, que era saber se o fluxo estava correto. A pergunta deste
+outro é onde o tempo está sendo gasto, e para ela o histórico não serve, porque
+não separa o tempo da função do tempo de transição entre etapas nem mostra os
+dois ramos paralelos sobrepostos. O recurso foi ligado, o comentário antigo foi
+preservado com a data e o motivo da mudança, e o custo permaneceu dentro da
+camada gratuita, que cobre cem mil rastreamentos por mês contra os cerca de cem
+que uma demonstração gera.
+
+![Mapa de serviços do X-Ray](evidencias/05-xray-service-map.png)
+
+### O painel e os alarmes
+
+O quarto caminho reuniu tudo numa tela. O painel foi escrito em Terraform, junto
+com o restante da infraestrutura, de modo que nasce no mesmo comando que cria o
+sistema e desaparece no mesmo comando que o destrói. Ele não substitui o painel
+web do projeto, que mostra o fluxo acontecendo e responde à pergunta do
+operador sobre o que está sendo processado agora; este responde à pergunta de
+como o sistema está se comportando, com latência, erro, saturação e custo.
+
+![Painel do CloudWatch, faixa superior](evidencias/01-dashboard-entrada-e-latencia.png)
+
+Na faixa superior, o primeiro gráfico traz as equações submetidas contra as
+execuções efetivamente iniciadas, e a distância entre as duas linhas é a
+quantidade de equações repetidas que o sistema reconheceu e descartou antes de
+processar. O segundo mostra a distribuição pelos três ramos do discriminante e
+o terceiro separa as recusas por motivo. Logo abaixo aparecem a duração de cada
+etapa e a latência da fila até a gravação, que é a medida mais próxima do que
+um usuário sentiria.
+
+![Painel do CloudWatch, faixa inferior](evidencias/02-dashboard-falha-saturacao-e-log.png)
+
+A faixa inferior trata de falha e de capacidade, e termina com um quadro que
+traz as últimas linhas de erro e alerta das sete funções, de modo que o caminho
+entre notar algo estranho num gráfico e ler o que aconteceu se completa sem
+trocar de tela. Os cinco alarmes seguem a mesma lógica de utilidade: cada um tem
+escrito na própria descrição o que a pessoa deve fazer quando ele disparar, e o
+limite de cada um foi escolhido para não tocar durante uma demonstração normal.
+Durante a carga de teste, o alarme da fila de mensagens recusadas disparou
+sozinho, sem ter sido forçado.
+
+![Os cinco alarmes, um deles disparado](evidencias/06-alarmes.png)
+
+### Primeira otimização: onde a conexão com a AWS é criada
+
+A primeira consulta feita depois de instalar tudo perguntou quanto tempo cada
+etapa do fluxo levava, e o resultado trouxe uma anomalia grande demais para ser
+ignorada. A etapa de gravação levava treze milésimos de segundo na maior parte
+das vezes, mas em cinco por cento dos casos levava quase seis segundos, uma
+diferença de mais de quatrocentas vezes entre o comportamento comum e o pior
+caso. Separando as invocações que rodavam numa função já aquecida daquelas que
+precisavam inicializar do zero, ficou claro que a lentidão inteira estava nas
+frias. Isso apontava para a inicialização, mas o tempo de inicialização medido
+era de apenas oitenta e três milésimos de segundo, o que significava que os seis
+segundos aconteciam depois, já dentro do processamento da requisição.
+
+![Duração por etapa, com o discrepante à vista](evidencias/04-logs-insights-p95-por-estado.png)
+
+A causa era uma decisão tomada no checkpoint anterior com boa intenção. O código
+criava a conexão com o banco de dados de forma preguiçosa, apenas no momento em
+que ela fosse usada pela primeira vez, para que a inicialização da função
+ficasse leve. O efeito real era o oposto do pretendido, porque a AWS concede
+processamento ampliado durante a fase de inicialização e o raciona depois; o
+trabalho mais pesado estava sendo feito exatamente na janela em que ele custa
+mais caro. A correção foram três linhas em quatro arquivos, movendo a criação da
+conexão para o carregamento do módulo, com um resguardo que preserva o
+comportamento preguiçoso fora da nuvem, do qual a suíte de testes depende.
+
+O resultado foi medido com duas cargas idênticas de cento e vinte equações,
+antes e depois da mudança. A invocação fria da etapa de gravação caiu de 5.972
+para 243 milissegundos, o tempo cobrado médio dessa função caiu de 632 para 87
+milissegundos, e a latência da fila até o resultado, considerando os cinco por
+cento piores casos, caiu de 7.890 para 3.120 milissegundos. Cerca de 417
+milissegundos migraram para a fase de inicialização, que é onde custam menos, de
+forma que o trabalho não desapareceu e apenas mudou de lugar. Em valor
+monetário, nesta escala, a economia é uma fração de centavo, e vale dizer isso
+com clareza; o ganho real está na espera, que caiu pela metade, e na capacidade
+liberada, já que a conta usada permite apenas dez execuções simultâneas e uma
+função que ocupava seis segundos atrapalhava todas as outras.
+
+### Segunda otimização: o volume de log da máquina de estados
+
+A consulta que compara quanto cada componente escreve mostrou uma concentração
+inesperada. A máquina de estados sozinha gerava 1,74 megabyte de log contra 763
+kilobytes das sete funções somadas, ou 18,5 kilobytes por execução contra 8,1
+kilobytes de todas as funções juntas, o que significa que um único componente
+respondia por setenta por cento de tudo que o sistema escreve. A causa é uma
+configuração que manda gravar a entrada e a saída de cada uma das nove etapas de
+cada execução, e como a equação inteira viaja nesse conteúdo, o volume se
+acumula depressa.
+
+Desligar essa configuração foi testado com duas cargas iguais de trinta
+equações. O volume caiu de 18.856 para 6.994 bytes por execução, uma redução de
+sessenta e três por cento naquele componente e de quarenta e três por cento em
+tudo que o sistema escreve. A dúvida que impedia adotar a mudança era saber o
+que se perde junto, e a resposta veio inspecionando os eventos campo a campo: o
+nome da etapa continua sendo gravado, de modo que todos os contadores e o
+desenho do fluxo no painel seguem funcionando, e o motivo de uma falha também
+permanece. O que se perde é o texto de detalhe que o painel mostra em cada
+passo, e esse detalhe passa a vir de uma chamada de API que o código já fazia
+para outro caminho. Aqui houve uma correção no próprio projeto, porque uma
+versão anterior deste relatório afirmava que essa alternativa já estava
+implementada quando o código chamava a API mas nunca lia o campo de saída; a
+falta foi corrigida, coberta por quatro testes e verificada contra a AWS com a
+configuração já desligada.
+
+A otimização ficou confirmada e desligada, por uma razão que não é técnica. A
+infraestrutura do checkpoint anterior continua no ar para correção, e o detalhe
+em cada passo do painel faz parte daquela entrega, de forma que trocar o
+comportamento dela enquanto está sendo avaliada significaria arriscar uma nota
+para economizar cinquenta e nove centavos a cada cem mil execuções. A chave para
+ligar a mudança está pronta numa variável do Terraform, e é uma linha de comando
+quando a correção terminar.
+
+### Terceira otimização: o cálculo paralelo das duas raízes
+
+Quando o discriminante é positivo e a equação tem duas raízes distintas, o fluxo
+abre dois ramos concorrentes e calcula uma raiz em cada um. A medição mostrou
+que cada um desses cálculos leva trinta e um microssegundos. Para executar
+sessenta e dois microssegundos de aritmética, o sistema gasta duas invocações de
+função com nove milissegundos cobrados cada uma, três transições de estado em
+vez de uma, e duas das dez execuções simultâneas que a conta permite. Essa
+última parte é a mais relevante, porque a análise de desempenho mostrou que o
+recurso escasso deste sistema é capacidade de execução simultânea, e não
+processamento.
+
+![Uma execução completa, com o paralelo percorrido](evidencias/07-step-functions-parallel.png)
+
+A recomendação aqui é deliberadamente condicional. O checkpoint anterior já
+registrava no próprio código que essa divisão foi feita para demonstrar o
+recurso de execução paralela, com finalidade didática, e a medição não
+contradiz aquela decisão; ela apenas coloca um número nela. Em um sistema de
+produção o caminho seria juntar os dois ramos numa etapa única, que é exatamente
+o que o fluxo já faz quando a raiz é dupla. Neste repositório o paralelo
+permanece, porque removê-lo apagaria a evidência da entrega anterior, que ainda
+está sendo avaliada.
+
+## Conclusão
+
+O trabalho de instrumentar um sistema que já funcionava produziu dois tipos de
+resultado. O primeiro é o esperado e estava no enunciado: existe agora um
+registro padronizado que permite seguir uma equação por todas as etapas, existem
+onze medidas de negócio que a AWS não teria como produzir sozinha, existe um
+mapa do percurso de cada requisição e existe um painel com alarmes, tudo
+declarado em Terraform e reproduzível por quem clonar o repositório.
+
+O segundo resultado foi menos previsível e é o mais interessante. A
+instrumentação encontrou, na primeira medição séria, um problema de desempenho
+que existia desde o checkpoint anterior e que nenhuma revisão de código havia
+apanhado, porque o código estava correto e a decisão que o causava tinha um
+comentário explicando por que era uma boa ideia. Foram necessários dados reais
+para mostrar que a boa ideia custava seis segundos. No mesmo sentido, os
+quarenta erros registrados durante a carga de teste coincidem exatamente com as
+quarenta falhas que o modo de caos injetou de propósito, e sem a métrica que
+separa uma coisa da outra a leitura seria de que o sistema falhou em quarenta e
+dois por cento das execuções, uma conclusão errada extraída de dados corretos.
+
+Vale registrar também o que a observabilidade custa, já que ela não é gratuita.
+Uma demonstração completa cabe na camada gratuita da AWS em todos os serviços
+envolvidos, mas as vinte e quatro séries de métricas customizadas são cobradas
+por mês independentemente do uso, o que resulta em até quatro dólares e vinte
+centavos mensais. Isso invalidou uma afirmação do checkpoint anterior, que dizia
+que a infraestrutura não tinha nenhum recurso de custo fixo, e a frase foi
+corrigida no README em vez de ser mantida por inércia.
+
+Por fim, três defeitos do próprio painel só apareceram no momento de capturar as
+telas de evidência, e nenhum deles teria sido apanhado pelos testes ou pela
+validação da infraestrutura, que passavam nos três casos. Dois eram erros de
+sintaxe na consulta do quadro de log, sendo que o primeiro se manifestava como
+ausência de dados em vez de erro, que é a forma mais cara de errar. O terceiro
+não era defeito, e sim um quadro corretamente vazio porque nenhuma carga
+anterior havia pedido equações inválidas. A lição que fica é que produzir a
+evidência faz parte de construir a observabilidade, com o mesmo peso de escrever
+o código que a coleta.
 
 ---
 
-## O que foi instalado
-
-Quatro coisas, todas usando serviços nativos da AWS e todas declaradas em
-Terraform, junto com o resto da infraestrutura.
-
-**Um formato único de log.** Antes, cada uma das sete funções escrevia suas
-mensagens do seu próprio jeito. Agora todas escrevem no mesmo formato, e toda
-linha carrega os mesmos campos: qual função escreveu, em que etapa do fluxo ela
-estava, quanto tempo levou, se foi a primeira tentativa ou uma repetição, e
-um identificador da equação que está sendo processada.
-
-Esse identificador é o que faz o resto funcionar. Como ele acompanha a equação
-por todas as etapas, dá para pegar uma equação específica e ver o caminho
-inteiro que ela percorreu, incluindo as tentativas que falharam no meio.
-
-**Onze medidas de negócio.** Quantas equações entraram, quantas viraram
-execução, quantas foram descartadas por já terem sido processadas, quanto tempo
-cada etapa levou, quantas caíram em cada um dos três caminhos possíveis do
-cálculo, por que as recusadas foram recusadas. A AWS já media coisas genéricas
-como "número de invocações"; nenhuma delas sabia o que é uma equação.
-
-Essas medidas viajam dentro da própria linha de log, num formato que a AWS
-chama de EMF. A alternativa seria a função fazer uma chamada de API extra a
-cada vez que quisesse registrar um número, o que acrescentaria tempo a toda
-invocação e mais um ponto de falha. Do jeito escolhido, o custo em tempo é
-zero: a AWS lê a métrica do log depois, por conta própria.
-
-**Rastreamento distribuído (X-Ray).** Desenha o caminho de uma requisição
-passando por todos os componentes, com o tempo gasto em cada um. O Checkpoint 3
-tinha deixado isso desligado com uma justificativa que fazia sentido na época,
-e este checkpoint reverteu a decisão. A justificativa antiga está preservada no
-arquivo, com a data e o motivo da mudança.
-
-**Um painel e cinco alarmes.** O painel mostra entrada, latência, falha e
-saturação numa tela só. Os alarmes avisam quando alguma coisa sai do lugar, e
-cada um deles tem escrito na própria descrição o que a pessoa deve fazer quando
-ele disparar — o texto vai junto no e-mail.
-
----
-
-## O painel
-
-![Painel, faixa de cima](evidencias/01-dashboard-entrada-e-latencia.png)
-
-Na primeira faixa, o gráfico da esquerda mostra quantas equações entraram
-contra quantas viraram execução de verdade. A diferença entre as duas linhas
-são as equações repetidas que o sistema reconheceu e descartou antes de
-processar. Isso já era uma promessa do Checkpoint 3; agora é um número que se
-vê subir.
-
-O gráfico do meio mostra os três caminhos possíveis do cálculo, conforme a
-equação tenha duas raízes, uma só, ou nenhuma raiz real. O da direita mostra
-por que as equações recusadas foram recusadas, separadas em quatro motivos.
-
-Na segunda faixa, à esquerda, o tempo que cada etapa leva. As duas metades do
-cálculo em paralelo aparecem como linhas separadas, e isso vai importar mais
-adiante. À direita, o tempo total da fila até o resultado gravado, que é o
-número que mais se aproxima do que um usuário sentiria.
-
-![Painel, faixa de baixo](evidencias/02-dashboard-falha-saturacao-e-log.png)
-
-A parte de baixo trata de falha e de capacidade: execuções que deram certo e
-errado, repetições, quantas invocações precisaram ser inicializadas do zero, o
-tamanho das filas, e quantas vezes a AWS recusou executar uma função por falta
-de capacidade na conta.
-
-O último quadro traz as linhas de erro e alerta mais recentes das sete funções.
-Ele fecha o caminho entre ver que alguma coisa aconteceu no gráfico e ler o que
-foi, sem trocar de tela.
-
----
-
-## O caminho de uma equação
-
-![Rastro de uma equação](evidencias/03-logs-insights-rastro-de-uma-equacao.png)
-
-Esta é a tela que melhor mostra o valor do formato único de log. Uma consulta
-com uma condição só, filtrando pelo identificador da equação, devolve as nove
-linhas que ela produziu ao atravessar cinco funções diferentes:
-
-```text
-dispatcher              execução iniciada
-validate    Validate    equação validada          tentativa 0
-delta       Delta       falha injetada            tentativa 0    tentativa 1 de 2
-delta       Delta       falha injetada            tentativa 1    tentativa 2 de 2
-dispatcher              execução repetida, descartada
-delta       Delta       discriminante calculado   tentativa 2
-root        RootX2      raiz calculada            tentativa 0
-root        RootX1      raiz calculada            tentativa 0
-persist     Persist     resultado gravado         tentativa 0
-```
-
-Dá para acompanhar a história inteira. A equação entrou, foi validada, falhou
-duas vezes de propósito na etapa do discriminante — o sistema tem um modo que
-injeta falhas para demonstrar a recuperação —, foi refeita na terceira
-tentativa, teve as duas raízes calculadas em paralelo e foi gravada.
-
-Duas coisas só são possíveis porque estão registradas em toda linha: o número
-da tentativa, que mostra a recuperação acontecendo, e o nome da etapa, que
-separa as duas metades do cálculo em paralelo. A mesma função atende as duas, e
-sem esse campo as linhas seriam indistinguíveis.
-
----
-
-## O que a medição encontrou
-
-### A função que levava seis segundos
-
-![Tempo por etapa](evidencias/04-logs-insights-p95-por-estado.png)
-
-A primeira consulta séria depois de instalar tudo perguntou quanto tempo cada
-etapa leva. O resultado tinha uma anomalia difícil de ignorar: a etapa de
-gravação levava treze milésimos de segundo na maioria das vezes, mas em 5% dos
-casos levava **quase seis segundos**. Uma diferença de 440 vezes entre o caso
-comum e o caso ruim.
-
-A consulta seguinte separou as invocações em duas populações: as que rodavam
-numa função já aquecida e as que precisavam inicializar do zero. A cauda inteira
-estava nas frias, e as quentes eram todas rápidas.
-
-Isso apontou para a inicialização, mas o número da inicialização era de apenas
-83 milésimos de segundo. Os seis segundos estavam acontecendo **depois**, já
-dentro do processamento.
-
-A causa era uma decisão do checkpoint anterior. O código criava a conexão com o
-banco de dados de forma preguiçosa, só na hora em que fosse usada pela primeira
-vez, com a intenção de manter a inicialização leve. O efeito real era o
-contrário: a AWS dá bastante processador durante a fase de inicialização e
-raciona depois, então o trabalho pesado estava sendo feito exatamente na janela
-em que ele custa mais caro.
-
-A correção são três linhas em quatro arquivos, criando a conexão no fim do
-carregamento do módulo em vez de na primeira chamada. O que se ganhou, medido
-com duas cargas idênticas de 120 equações:
-
-| | Antes | Depois |
-| --- | --- | --- |
-| Gravação, invocação fria | 5.972 ms | 243 ms |
-| Gravação, tempo cobrado em média | 632 ms | 87 ms |
-| Tempo total da fila ao resultado, pior 5% | 7.890 ms | 3.120 ms |
-| Tempo total, pior caso absoluto | 14.081 ms | 6.716 ms |
-| Primeira requisição de envio | 2.833 ms | 309 ms |
-
-O trabalho não desapareceu. Cerca de 417 milésimos migraram para a fase de
-inicialização, que é onde eles custam menos. A mesma tarefa que levava quase
-seis segundos no lugar errado leva menos de meio segundo no lugar certo.
-
-Em dinheiro isso é uma fração de centavo nesta escala, e vale dizer isso com
-todas as letras. O ganho real está em dois outros lugares: a espera que alguém
-sentiria caiu pela metade, e uma função que ocupava seis segundos de uma conta
-que só permite dez execuções ao mesmo tempo deixou de atrapalhar as outras.
-
-### Um único arquivo de log respondia por 70% do volume
-
-Comparando quanto cada componente escreve, a máquina de estados sozinha gerava
-1,74 MB contra 763 KB das sete funções somadas. Por execução, 18,5 KB contra
-8,1 KB.
-
-A causa é uma configuração que manda gravar a entrada e a saída de cada etapa
-de cada execução. Como são nove etapas e a equação inteira viaja no meio,
-acumula rápido.
-
-Desligar essa configuração foi testado com duas cargas iguais de 30 equações.
-O volume caiu de 18.856 para 6.994 bytes por execução, uma redução de 63% nesse
-arquivo e de 43% em tudo que o sistema escreve.
-
-A dúvida que impedia a adoção era o que se perde junto. A resposta veio olhando
-os eventos campo a campo: o nome da etapa continua sendo gravado, então todos
-os contadores e o desenho do fluxo no painel continuam funcionando; o motivo de
-uma falha também continua. O que some é o texto de detalhe que o painel mostra
-em cada passo, do tipo `delta = 49`.
-
-Esse detalhe passa a vir de uma chamada de API que o próprio código já fazia
-para outro caminho. Aqui houve uma correção no projeto: uma versão anterior
-deste relatório afirmava que essa alternativa já estava pronta, e não estava. O
-código chamava a API mas nunca lia o campo de saída. Foi corrigido, com quatro
-testes, e verificado contra a AWS com a configuração já desligada.
-
-Mesmo confirmada, a otimização ficou **desligada**. A razão não tem a ver com
-técnica: a stack do Checkpoint 3 está no ar sendo corrigida, e o detalhe em
-cada passo do painel faz parte daquela entrega. Trocar o comportamento dela
-enquanto está sendo avaliada seria trocar cinquenta e nove centavos por 100 mil
-execuções pelo risco de uma nota.
-
-Depois da correção sair, é uma linha de comando:
-
-```bash
-terraform apply -var 'state_machine_execution_data=false'
-```
-
-### O cálculo em paralelo custa muito mais do que a conta que ele faz
-
-![Execução no Step Functions](evidencias/07-step-functions-parallel.png)
-
-Quando a equação tem duas raízes distintas, o fluxo abre dois ramos
-concorrentes, um para cada raiz. O tempo medido de cada cálculo é de **31
-microssegundos**.
-
-Para fazer 62 microssegundos de aritmética, o fluxo gasta duas invocações de
-função com tempo cobrado de 9 milésimos cada, três transições de estado em vez
-de uma, e duas das dez execuções simultâneas que a conta permite. Essa última
-parte é a que importa. A análise mostrou que o recurso escasso deste sistema é
-capacidade de execução simultânea, muito antes de ser processador.
-
-A recomendação aqui é condicional de propósito. O Checkpoint 3 já registrava no
-próprio código que essa divisão foi feita para demonstrar o recurso de execução
-paralela, com finalidade didática. A medição não contradiz aquela decisão, ela
-apenas coloca um número nela. Em produção, o caminho seria juntar os dois ramos
-numa etapa só, que é exatamente o que o fluxo já faz no caso da raiz dupla.
-Neste repositório o paralelo fica, porque apagá-lo destruiria a evidência da
-entrega anterior.
-
----
-
-## Duas observações que valem mais que as otimizações
-
-**Nenhuma falha da carga foi real.** Os 40 erros registrados batem exatamente
-com as 40 falhas que o modo caos injetou de propósito. Sem a medida que separa
-as duas coisas, a leitura seria "o sistema falhou 42% das vezes", uma conclusão
-errada tirada de dados corretos. Essa medida quase foi cortada durante o
-projeto por questão de custo.
-
-**A instrumentação corrigiu uma decisão bem-intencionada.** A conexão preguiçosa
-do banco foi escrita para economizar, com um comentário explicando por quê. Ela
-custava seis segundos. Sem medir, continuaria lá, parecendo uma boa ideia.
-
----
-
-## Os alarmes
-
-![Alarmes](evidencias/06-alarmes.png)
-
-Cinco alarmes, e um deles disparou sozinho durante a carga de teste, sem ter
-sido forçado: a fila de mensagens recusadas recebeu conteúdo e o alarme reagiu.
-
-Os outros quatro ficaram em OK, incluindo o de execuções falhando. O limite dele
-foi posto em cinco justamente para não disparar durante uma demonstração com
-falhas injetadas, e não disparou. Um alarme que toca toda vez que a demonstração
-roda é um alarme que as pessoas aprendem a ignorar.
-
----
-
-## O rastreamento ponta a ponta
-
-![Service map do X-Ray](evidencias/05-xray-service-map.png)
-
-O mapa mostra o caminho completo de uma requisição: o cliente, a função que
-recebe o pedido, a que traduz mensagem em execução, a máquina de estados, as
-quatro funções de cálculo e a fila que recebe o que foi recusado. O arco
-vermelho no centro são as execuções que terminaram recusadas.
-
----
-
-## Quanto custa
-
-Uma demonstração inteira de 120 equações cabe na camada gratuita da AWS em
-todos os serviços: execuções, funções, filas, banco, log e rastreamento.
-
-O custo real aparece em outro lugar. As 24 séries de medidas customizadas são
-cobradas por mês, existindo elas sendo usadas ou não. São dez gratuitas e
-US$ 0,30 por cada uma acima disso, o que dá **US$ 4,20 por mês** no teto.
-
-Isso corrige uma afirmação do Checkpoint 3. O README dizia que nenhum recurso
-tinha custo fixo, e depois deste checkpoint isso deixou de ser verdade. A frase
-foi trocada em vez de continuar lá por inércia.
-
-O valor acima é teto, não previsão. A documentação da AWS indica que essas
-medidas são cobradas proporcionalmente às horas em que recebem dado, e um
-laboratório só publica durante as demonstrações. Isso não foi conferido na
-fatura, então o número que se deve assumir é o cheio.
-
----
-
-## O que ficou de fora, e por quê
-
-**Instrumentar os Checkpoints 1 e 2.** Os três estilos de arquitetura já
-convivem no Checkpoint 3, que tem entrada por HTTP, fila e orquestração no mesmo
-sistema. Observar os outros dois repositórios veria as mesmas coisas em sistemas
-menores.
-
-**Aumentar a memória das funções.** Era uma candidata antes da primeira
-otimização. Depois dela, a função de gravação roda em 14 milésimos e usa 95 MB
-dos 128 disponíveis. Aumentar só faria sentido se o tempo ainda fosse dominado
-por processador, o que deixou de ser o caso.
-
-**Eliminar as inicializações do zero reservando capacidade.** A AWS exige deixar
-dez execuções não reservadas, e o limite total da conta é dez. Não há como fazer
-nesta conta.
-
-**Notificação por e-mail nos alarmes.** O tópico existe e a inscrição está
-pronta numa variável, vazia por padrão. Inscrever um e-mail exige uma
-confirmação manual por link que o Terraform não consegue completar sozinho.
-
-**O painel web do projeto entre as evidências.** Abri-lo exige digitar a chave
-de API na tela, e uma captura com a chave visível seria uma credencial
-versionada num repositório público.
-
----
-
-## Três defeitos que só a captura de tela encontrou
-
-Vale registrar, porque nenhum deles apareceria nos testes nem no `terraform
-apply`, que passavam nos três casos.
-
-O quadro de log do painel respondia "nenhum dado encontrado". A consulta estava
-montada com um erro de aspas, e o CloudWatch reportou isso como ausência de
-dados em vez de erro de sintaxe. A segunda tentativa de correção também estava
-errada, e essa falhou de forma visível, reclamando de uma vírgula. A forma que
-funciona usa um seletor por prefixo, que ainda tem a vantagem de pegar uma
-oitava função automaticamente se ela existir um dia.
-
-O terceiro caso não era defeito. O quadro de recusas ficava vazio porque
-nenhuma carga anterior tinha pedido equações inválidas. O dado não existia e o
-quadro estava certo ao dizer isso.
-
----
-
-## Onde está cada coisa
-
-| | |
-| --- | --- |
-| Números brutos das medições | [`evidencias/medicoes.md`](evidencias/medicoes.md) |
-| Telas do console | [`evidencias/`](evidencias/) |
-| Texto pronto para o Canvas | [`entrega-canvas.md`](entrega-canvas.md) |
-| Decisão de cada ciclo | [`cycle-08.md`](cycle-08.md) a [`cycle-13.md`](cycle-13.md) |
-| Plano original | [`especificacao-cp4.md`](especificacao-cp4.md) |
-| Infraestrutura do painel e dos alarmes | [`../infra/observability.tf`](../infra/observability.tf) |
+Os números brutos de todas as medições, com as tabelas completas de antes e
+depois, estão em [`evidencias/medicoes.md`](evidencias/medicoes.md). As decisões
+tomadas em cada ciclo de desenvolvimento estão registradas em
+[`cycle-08.md`](cycle-08.md) a [`cycle-13.md`](cycle-13.md), e o plano original
+em [`especificacao-cp4.md`](especificacao-cp4.md).
