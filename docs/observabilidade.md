@@ -3,10 +3,11 @@
 Este documento e a entrega do Checkpoint 4: o que foi instrumentado, como se le
 o que ele produz, e as tres otimizacoes que a instrumentacao revelou.
 
-Todos os numeros citados aqui foram **medidos na AWS**, em duas cargas de 120
-equacoes em 13/09/2026. Os dados brutos estao em
-[`evidencias/medicoes.md`](evidencias/medicoes.md); os prints, em
-[`evidencias/`](evidencias/).
+Todos os numeros citados aqui foram **medidos na AWS**, em cargas reais de
+13/09/2026. Os dados brutos estao em
+[`evidencias/medicoes.md`](evidencias/medicoes.md); as sete telas do console,
+com o que cada uma prova, em
+[`evidencias/README.md`](evidencias/README.md).
 
 ---
 

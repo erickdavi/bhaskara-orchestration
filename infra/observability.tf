@@ -263,8 +263,17 @@ resource "aws_cloudwatch_dashboard" "observability" {
           view   = "table"
           # O widget de log fecha o ciclo: do grafico que mostra que algo
           # aconteceu para a linha que diz o que foi, sem trocar de tela.
+          # Duas tentativas erradas antes desta, as duas descobertas so na
+          # captura das evidencias — nenhuma falhou no `apply`:
+          #
+          #   SOURCE /aws/lambda/a' , 'b     -> "No data found", sem erro
+          #   SOURCE '/aws/lambda/a', '...'  -> "LogGroupName cannot contain a comma"
+          #
+          # A forma que funciona e a mesma do Logs Insights: um seletor por
+          # prefixo, que resolve as sete de uma vez e nao quebra quando uma
+          # funcao nova entrar no `local.functions`.
           query = join("\n| ", [
-            "SOURCE ${join("' , '", [for name in local.ordered_functions : "/aws/lambda/${local.name_prefix}-${name}"])}",
+            "SOURCE logGroups(namePrefix: [\"/aws/lambda/${local.name_prefix}-\"], class: \"STANDARD\")",
             "fields @timestamp, service, state, event, execution, error_type, detail",
             "filter level in [\"ERROR\", \"WARN\"]",
             "sort @timestamp desc",
