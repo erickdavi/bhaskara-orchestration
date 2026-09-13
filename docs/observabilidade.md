@@ -1,442 +1,349 @@
 # Observabilidade — Checkpoint 4
 
-Este documento e a entrega do Checkpoint 4: o que foi instrumentado, como se le
-o que ele produz, e as tres otimizacoes que a instrumentacao revelou.
+## Resumo
 
-Todos os numeros citados aqui foram **medidos na AWS**, em cargas reais de
-13/09/2026. Os dados brutos estao em
-[`evidencias/medicoes.md`](evidencias/medicoes.md); as sete telas do console,
-com o que cada uma prova, em
-[`evidencias/README.md`](evidencias/README.md).
+O sistema do Checkpoint 3 recebe equações do segundo grau por uma fila e as
+resolve numa esteira de cinco funções na AWS. Ele funcionava, mas ninguém
+conseguia ver o que estava acontecendo lá dentro enquanto rodava. Este
+checkpoint instalou essa visibilidade.
+
+A instalação valeu a pena logo na primeira medição séria. Uma das funções
+estava levando quase seis segundos para fazer um trabalho que leva treze
+milésimos de segundo, e isso vinha acontecendo desde o checkpoint anterior sem
+que aparecesse em lugar nenhum. Depois de descobrir a causa e corrigir, a
+demora que um usuário sentiria caiu 60% no pior caso.
+
+O documento conta como isso foi descoberto, o que mais os números mostraram, e
+o que ficou proposto para depois.
+
+Os dados brutos estão em [`evidencias/medicoes.md`](evidencias/medicoes.md).
 
 ---
 
-## 1. O que foi instrumentado
+## O que foi instalado
 
-| Camada | Antes do CP4 | Depois |
-| --- | --- | --- |
-| Log estruturado | JSON solto, sem nivel, correlacao inconsistente | envelope canonico de 10 campos, nas 7 funcoes |
-| Nivel de severidade | inexistente | INFO / WARN / ERROR |
-| Metricas de negocio | nenhuma | 11 metricas em EMF, 24 series |
-| Metricas nativas | so as que a AWS emite | as mesmas, agora num painel |
-| Traco distribuido | desligado por decisao | X-Ray ativo nas 7 funcoes e na state machine |
-| Painel de operacao | nao existia | 1 dashboard, 10 widgets, em Terraform |
-| Alarmes | nenhum | 5, com acao escrita em cada um |
-| Consultas | ad hoc, no navegador de quem escreveu | 5 versionadas em Terraform |
+Quatro coisas, todas usando serviços nativos da AWS e todas declaradas em
+Terraform, junto com o resto da infraestrutura.
 
-Detalhe de cada decisao nos ciclos [08](cycle-08.md), [09](cycle-09.md),
-[10](cycle-10.md), [11](cycle-11.md) e [12](cycle-12.md).
+**Um formato único de log.** Antes, cada uma das sete funções escrevia suas
+mensagens do seu próprio jeito. Agora todas escrevem no mesmo formato, e toda
+linha carrega os mesmos campos: qual função escreveu, em que etapa do fluxo ela
+estava, quanto tempo levou, se foi a primeira tentativa ou uma repetição, e
+um identificador da equação que está sendo processada.
 
-### O envelope de log
+Esse identificador é o que faz o resto funcionar. Como ele acompanha a equação
+por todas as etapas, dá para pegar uma equação específica e ver o caminho
+inteiro que ela percorreu, incluindo as tentativas que falharam no meio.
 
-Toda linha das sete funcoes tem a mesma forma:
+**Onze medidas de negócio.** Quantas equações entraram, quantas viraram
+execução, quantas foram descartadas por já terem sido processadas, quanto tempo
+cada etapa levou, quantas caíram em cada um dos três caminhos possíveis do
+cálculo, por que as recusadas foram recusadas. A AWS já media coisas genéricas
+como "número de invocações"; nenhuma delas sabia o que é uma equação.
 
-```json
-{"event": "delta_calculated", "level": "INFO", "service": "delta", "state": "Delta",
- "execution": "9c1d4f…", "batch_id": "b-fbc1be4f0e", "request_id": "8f2e…",
- "attempt": 1, "cold_start": false, "duration_ms": 0.024,
- "value": 1, "sign": "positive"}
-```
+Essas medidas viajam dentro da própria linha de log, num formato que a AWS
+chama de EMF. A alternativa seria a função fazer uma chamada de API extra a
+cada vez que quisesse registrar um número, o que acrescentaria tempo a toda
+invocação e mais um ponto de falha. Do jeito escolhido, o custo em tempo é
+zero: a AWS lê a métrica do log depois, por conta própria.
 
-O campo que faz o resto valer e o `execution` — a chave de idempotencia, que
-acompanha a equacao pelos cinco estados. Filtrar por ele devolve o caminho
-inteiro de uma unica equacao, incluindo as tentativas que falharam:
+**Rastreamento distribuído (X-Ray).** Desenha o caminho de uma requisição
+passando por todos os componentes, com o tempo gasto em cada um. O Checkpoint 3
+tinha deixado isso desligado com uma justificativa que fazia sentido na época,
+e este checkpoint reverteu a decisão. A justificativa antiga está preservada no
+arquivo, com a data e o motivo da mudança.
+
+**Um painel e cinco alarmes.** O painel mostra entrada, latência, falha e
+saturação numa tela só. Os alarmes avisam quando alguma coisa sai do lugar, e
+cada um deles tem escrito na própria descrição o que a pessoa deve fazer quando
+ele disparar — o texto vai junto no e-mail.
+
+---
+
+## O painel
+
+![Painel, faixa de cima](evidencias/01-dashboard-entrada-e-latencia.png)
+
+Na primeira faixa, o gráfico da esquerda mostra quantas equações entraram
+contra quantas viraram execução de verdade. A diferença entre as duas linhas
+são as equações repetidas que o sistema reconheceu e descartou antes de
+processar. Isso já era uma promessa do Checkpoint 3; agora é um número que se
+vê subir.
+
+O gráfico do meio mostra os três caminhos possíveis do cálculo, conforme a
+equação tenha duas raízes, uma só, ou nenhuma raiz real. O da direita mostra
+por que as equações recusadas foram recusadas, separadas em quatro motivos.
+
+Na segunda faixa, à esquerda, o tempo que cada etapa leva. As duas metades do
+cálculo em paralelo aparecem como linhas separadas, e isso vai importar mais
+adiante. À direita, o tempo total da fila até o resultado gravado, que é o
+número que mais se aproxima do que um usuário sentiria.
+
+![Painel, faixa de baixo](evidencias/02-dashboard-falha-saturacao-e-log.png)
+
+A parte de baixo trata de falha e de capacidade: execuções que deram certo e
+errado, repetições, quantas invocações precisaram ser inicializadas do zero, o
+tamanho das filas, e quantas vezes a AWS recusou executar uma função por falta
+de capacidade na conta.
+
+O último quadro traz as linhas de erro e alerta mais recentes das sete funções.
+Ele fecha o caminho entre ver que alguma coisa aconteceu no gráfico e ler o que
+foi, sem trocar de tela.
+
+---
+
+## O caminho de uma equação
+
+![Rastro de uma equação](evidencias/03-logs-insights-rastro-de-uma-equacao.png)
+
+Esta é a tela que melhor mostra o valor do formato único de log. Uma consulta
+com uma condição só, filtrando pelo identificador da equação, devolve as nove
+linhas que ela produziu ao atravessar cinco funções diferentes:
 
 ```text
-equation_validated   validate   Validate   attempt 0   INFO
-chaos_injected       delta      Delta      attempt 0   WARN   TransientFailure
-delta_calculated     delta      Delta      attempt 1   INFO   value 1  sign positive
-root_calculated      root       RootX1     attempt 0   INFO   x1 = 3.0
-root_calculated      root       RootX2     attempt 0   INFO   x2 = 2.0
-result_stored        persist    Persist    attempt 0   INFO   end_to_end_ms 497
+dispatcher              execução iniciada
+validate    Validate    equação validada          tentativa 0
+delta       Delta       falha injetada            tentativa 0    tentativa 1 de 2
+delta       Delta       falha injetada            tentativa 1    tentativa 2 de 2
+dispatcher              execução repetida, descartada
+delta       Delta       discriminante calculado   tentativa 2
+root        RootX2      raiz calculada            tentativa 0
+root        RootX1      raiz calculada            tentativa 0
+persist     Persist     resultado gravado         tentativa 0
 ```
 
-### As metricas
+Dá para acompanhar a história inteira. A equação entrou, foi validada, falhou
+duas vezes de propósito na etapa do discriminante — o sistema tem um modo que
+injeta falhas para demonstrar a recuperação —, foi refeita na terceira
+tentativa, teve as duas raízes calculadas em paralelo e foi gravada.
 
-| Metrica | Unidade | Responde |
-| --- | --- | --- |
-| `EquationsSubmitted` | Count | volume de entrada |
-| `ExecutionsStarted` | Count | quantas viraram execucao |
-| `ExecutionsDeduplicated` | Count | idempotencia, camada 1 |
-| `PersistDuplicate` | Count | idempotencia, camada 2 |
-| `EquationsByDeltaSign` | Count · `Sign` | distribuicao dos tres ramos do `Choice` |
-| `ValidationRejected` | Count · `Reason` | por que uma equacao e recusada |
-| `HandlerDuration` | ms · `Service`, `State` | p50/p95/p99 por estado |
-| `EndToEndLatency` | ms | da fila ate a gravacao |
-| `ColdStart` | Count | invocacoes que pagam inicializacao |
-| `RetryAttempt` | Count | invocacoes que sao reentrega |
-| `ChaosInjected` | Count | falha pedida, separada da falha real |
-| `UnauthorizedRequests` | Count | 403 no access log (metric filter) |
-
-**Nenhum identificador e dimensao.** `execution`, `batch_id`, `message_id` e
-`request_id` ficam na linha como campo — pesquisaveis, sem virar serie
-temporal. Um id como dimensao criaria uma metrica nova por equacao processada,
-cobrada por mes. Ha teste que falha se alguem tentar.
+Duas coisas só são possíveis porque estão registradas em toda linha: o número
+da tentativa, que mostra a recuperação acontecendo, e o nome da etapa, que
+separa as duas metades do cálculo em paralelo. A mesma função atende as duas, e
+sem esse campo as linhas seriam indistinguíveis.
 
 ---
 
-## 2. Analise de performance
+## O que a medição encontrou
 
-### Onde o tempo e gasto
+### A função que levava seis segundos
 
-Medido em 94 execucoes reais:
+![Tempo por etapa](evidencias/04-logs-insights-p95-por-estado.png)
 
-| Estado | p50 | p95 | O que faz |
-| --- | --- | --- | --- |
-| `Persist` | 13,4 ms | **5.939,7 ms** | grava no DynamoDB |
-| `Delta` | 0,032 ms | 0,044 ms | `b² − 4ac` |
-| `RootX1` | 0,031 ms | 0,039 ms | uma raiz |
-| `RootX2` | 0,032 ms | 0,034 ms | a outra raiz |
-| `Validate` | 0,021 ms | 0,027 ms | valida coeficientes |
+A primeira consulta séria depois de instalar tudo perguntou quanto tempo cada
+etapa leva. O resultado tinha uma anomalia difícil de ignorar: a etapa de
+gravação levava treze milésimos de segundo na maioria das vezes, mas em 5% dos
+casos levava **quase seis segundos**. Uma diferença de 440 vezes entre o caso
+comum e o caso ruim.
 
-Duas leituras saltam daqui.
+A consulta seguinte separou as invocações em duas populações: as que rodavam
+numa função já aquecida e as que precisavam inicializar do zero. A cauda inteira
+estava nas frias, e as quentes eram todas rápidas.
 
-**A matematica e gratuita.** Os quatro estados de calculo somados custam menos
-de **0,12 ms**. Tudo o mais que o sistema gasta e transporte, orquestracao e
-I/O. Qualquer otimizacao que mexa na conta esta otimizando 0,1% do problema.
+Isso apontou para a inicialização, mas o número da inicialização era de apenas
+83 milésimos de segundo. Os seis segundos estavam acontecendo **depois**, já
+dentro do processamento.
 
-**Uma unica funcao domina a cauda.** O `Persist` tem p50 de 13 ms e p95 de 5,9
-segundos — 443 vezes maior. Foi o fio que levou a otimizacao 1.
+A causa era uma decisão do checkpoint anterior. O código criava a conexão com o
+banco de dados de forma preguiçosa, só na hora em que fosse usada pela primeira
+vez, com a intenção de manter a inicialização leve. O efeito real era o
+contrário: a AWS dá bastante processador durante a fase de inicialização e
+raciona depois, então o trabalho pesado estava sendo feito exatamente na janela
+em que ele custa mais caro.
 
-### A latencia que o usuario sentiria
+A correção são três linhas em quatro arquivos, criando a conexão no fim do
+carregamento do módulo em vez de na primeira chamada. O que se ganhou, medido
+com duas cargas idênticas de 120 equações:
 
-`EndToEndLatency` mede da publicacao na fila ate a gravacao:
-
-| | media | p50 | p95 | maxima |
-| --- | --- | --- | --- | --- |
-| Antes | 1.551 ms | 497 ms | 7.890 ms | 14.081 ms |
-| Depois | 1.068 ms | 509 ms | 3.120 ms | 6.716 ms |
-
-O p50 nao mudou — o caminho quente ja estava rapido. O que mudou foi a cauda,
-que e onde vive a experiencia ruim.
-
-### O que limita a vazao
-
-A conta tem **10 execucoes Lambda concorrentes no total**, compartilhadas com
-os Checkpoints 1 e 2. Na carga de 120 equacoes:
-
-| funcao | throttles |
-| --- | --- |
-| root | 10 |
-| delta | 7 |
-| persist | 6 |
-| dispatcher | 3 |
-| validate | 2 |
-
-28 estrangulamentos, e 44 `RetryAttempt`. O `Retry` da state machine fez o seu
-trabalho — nenhuma equacao valida foi para a dead-letter por falta de
-concorrencia —, mas cada reentrega e uma invocacao a mais disputando o mesmo
-teto. **Concorrencia, e nao CPU, e o recurso escasso deste sistema.**
-
-### Confiabilidade
-
-94 execucoes, 89 concluidas, 5 na dead-letter. E o numero que importa:
-
-> **Os 40 erros de Lambda batem exatamente com os 40 `ChaosInjected`.**
-
-Nenhuma falha foi real. Sem a metrica que separa a falha pedida da falha
-inesperada, a leitura seria "42% de falha em 94 execucoes" — uma conclusao
-errada extraida de dados corretos.
-
----
-
-## 3. Analise de custo
-
-### O que a carga de 120 equacoes consumiu
-
-| Servico | Consumo medido | Custo |
+| | Antes | Depois |
 | --- | --- | --- |
-| Step Functions | 94 execucoes × ~9 transicoes ≈ 850 | camada gratuita cobre 4.000/mes |
-| Lambda | ~450 invocacoes, arm64, 128–256 MB | camada gratuita (1 M/mes) |
-| SQS | ~300 requisicoes | camada gratuita (1 M/mes) |
-| DynamoDB on-demand | 89 escritas | camada gratuita |
-| CloudWatch Logs | **2,5 MB ingeridos** | camada gratuita (5 GB/mes) |
-| X-Ray | ~94 traces | camada gratuita (100.000/mes) |
+| Gravação, invocação fria | 5.972 ms | 243 ms |
+| Gravação, tempo cobrado em média | 632 ms | 87 ms |
+| Tempo total da fila ao resultado, pior 5% | 7.890 ms | 3.120 ms |
+| Tempo total, pior caso absoluto | 14.081 ms | 6.716 ms |
+| Primeira requisição de envio | 2.833 ms | 309 ms |
 
-Uma demonstracao inteira cabe na camada gratuita. **O custo real deste projeto
-nao esta no consumo: esta nas series de metrica, que sao cobradas por mes e nao
-por uso.**
+O trabalho não desapareceu. Cerca de 417 milésimos migraram para a fase de
+inicialização, que é onde eles custam menos. A mesma tarefa que levava quase
+seis segundos no lugar errado leva menos de meio segundo no lugar certo.
 
-### O que a observabilidade custa por mes
+Em dinheiro isso é uma fração de centavo nesta escala, e vale dizer isso com
+todas as letras. O ganho real está em dois outros lugares: a espera que alguém
+sentiria caiu pela metade, e uma função que ocupava seis segundos de uma conta
+que só permite dez execuções ao mesmo tempo deixou de atrapalhar as outras.
 
-| Item | Camada gratuita | Este projeto | Custo de tabela |
-| --- | --- | --- | --- |
-| Metricas customizadas | 10 | **24 series** | 14 × US$ 0,30 = **US$ 4,20** |
-| Dashboard | 3 | 1 | US$ 0 |
-| Alarmes | 10 | 5 | US$ 0 |
-| Consultas salvas | — | 5 | US$ 0 |
-| X-Ray | 100k traces/mes | ~100 por demo | US$ 0 |
-| Logs | 5 GB/mes | ~2,5 MB por demo | US$ 0 |
+### Um único arquivo de log respondia por 70% do volume
 
-**US$ 4,20/mes** se as 24 series receberem dado o mes inteiro. Um laboratorio
-so publica metrica durante as demonstracoes, e a documentacao da AWS indica que
-metrica customizada e cobrada proporcionalmente as horas em que recebe dado —
-o que reduziria muito esse valor. **Nao confirmei isso na fatura**, entao o
-numero acima e o teto, nao a previsao.
+Comparando quanto cada componente escreve, a máquina de estados sozinha gerava
+1,74 MB contra 763 KB das sete funções somadas. Por execução, 18,5 KB contra
+8,1 KB.
 
-Isso corrige uma afirmacao do Checkpoint 3. O README dizia "nenhum recurso com
-custo fixo". Depois do CP4 nao e mais verdade: as series de metrica sao custo
-fixo mensal enquanto existirem.
+A causa é uma configuração que manda gravar a entrada e a saída de cada etapa
+de cada execução. Como são nove etapas e a equação inteira viaja no meio,
+acumula rápido.
 
-### O que a instrumentacao custou em latencia
+Desligar essa configuração foi testado com duas cargas iguais de 30 equações.
+O volume caiu de 18.856 para 6.994 bytes por execução, uma redução de 63% nesse
+arquivo e de 43% em tudo que o sistema escreve.
 
-**Zero.** O EMF escreve a metrica no proprio log, e o CloudWatch a extrai do
-lado dele — nao ha chamada de API no caminho quente. A alternativa,
-`PutMetricData`, somaria uma chamada sincrona a toda invocacao. Num sistema
-cujos estados de calculo levam 0,03 ms, isso teria multiplicado a duracao por
-ordens de grandeza.
+A dúvida que impedia a adoção era o que se perde junto. A resposta veio olhando
+os eventos campo a campo: o nome da etapa continua sendo gravado, então todos
+os contadores e o desenho do fluxo no painel continuam funcionando; o motivo de
+uma falha também continua. O que some é o texto de detalhe que o painel mostra
+em cada passo, do tipo `delta = 49`.
 
----
+Esse detalhe passa a vir de uma chamada de API que o próprio código já fazia
+para outro caminho. Aqui houve uma correção no projeto: uma versão anterior
+deste relatório afirmava que essa alternativa já estava pronta, e não estava. O
+código chamava a API mas nunca lia o campo de saída. Foi corrigido, com quatro
+testes, e verificado contra a AWS com a configuração já desligada.
 
-## 4. As tres otimizacoes
+Mesmo confirmada, a otimização ficou **desligada**. A razão não tem a ver com
+técnica: a stack do Checkpoint 3 está no ar sendo corrigida, e o detalhe em
+cada passo do painel faz parte daquela entrega. Trocar o comportamento dela
+enquanto está sendo avaliada seria trocar cinquenta e nove centavos por 100 mil
+execuções pelo risco de uma nota.
 
-### Otimizacao 1 — mover a inicializacao do boto3 para a fase de init
-
-**Estado: implementada e medida.**
-
-**O problema.** O `Persist` tinha p50 de 13,4 ms e p95 de 5.939,7 ms. A consulta
-que separa frio de quente mostrou onde estava a cauda:
-
-| cold_start | n | media | p50 | maximo |
-| --- | --- | --- | --- | --- |
-| quente | 79 | 13,39 ms | 13,65 ms | 25,79 ms |
-| **frio** | 10 | **5.972,17 ms** | 5.939,69 ms | 6.221,11 ms |
-
-E o `initDurationMs` da mesma funcao era **83 ms**. Os seis segundos nao
-estavam na inicializacao — estavam dentro do handler.
-
-**A causa.** O Checkpoint 3 escreveu os clientes boto3 de forma preguicosa, de
-proposito, para manter a inicializacao leve:
-
-```python
-def dynamodb():
-    global _dynamodb
-    if _dynamodb is None:
-        import boto3                        # <- na primeira invocacao
-        _dynamodb = boto3.client("dynamodb") # <- carrega o modelo do servico
-    return _dynamodb
-```
-
-A intencao era boa e o efeito e o oposto. O `import boto3` e o
-`boto3.client()` passam a rodar **na primeira invocacao**, com a CPU racionada
-de uma funcao de 128 MB. A Lambda concede CPU ampliada durante a fase de
-inicializacao, **independentemente da memoria configurada** — o codigo estava
-fazendo o trabalho mais pesado exatamente na janela onde ele custa mais caro.
-
-**A correcao.** Tres linhas no fim de quatro modulos:
-
-```python
-if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-    dynamodb()
-```
-
-O acessor preguicoso continua existindo — e ele que permite aos testes
-substituirem o cliente por um duble em memoria. O `if` garante que o
-aquecimento so acontece dentro da Lambda; na suite e no simulador local nenhum
-boto3 e importado.
-
-**O resultado**, com duas cargas identicas de 120 equacoes:
-
-| | Antes | Depois | |
-| --- | --- | --- | --- |
-| `persist` frio, no handler | 5.972 ms | 243 ms | **24x mais rapido** |
-| `persist`, billed medio | 632 ms | 87 ms | **7,3x mais barato** |
-| `persist`, init | 83 ms | 500 ms | +417 ms |
-| ponta a ponta, p95 | 7.890 ms | 3.120 ms | **−60%** |
-| ponta a ponta, maxima | 14.081 ms | 6.716 ms | **−52%** |
-| `submit`, 1a requisicao | 2.833 ms | 309 ms | **9,2x mais rapido** |
-
-O trabalho nao desapareceu: 417 ms migraram para a inicializacao. O que mudou e
-**onde** ele acontece — o mesmo import custa ~5.700 ms no handler e ~417 ms no
-init, e a diferenca e so a CPU que a plataforma concede em cada fase.
-
-**Honestidade sobre o ganho em dinheiro.** Em custo de Lambda isso e uma frecao
-de centavo nesta escala — mesmo a um milhao de equacoes, a economia seria
-inferior a US$ 1. O ganho e de **latencia** e de **concorrencia**: uma funcao
-que ocupa 6 segundos de um teto de 10 execucoes simultaneas e uma funcao que
-estrangula as outras seis.
-
----
-
-### Otimizacao 2 — parar de gravar o payload de cada estado no log da state machine
-
-**Estado: confirmada e medida. Desligada por escolha, com a chave no lugar.**
-
-**O problema.** Volume de log ingerido por 94 execucoes:
-
-| grupo | bytes | por execucao |
-| --- | --- | --- |
-| **state machine** | **1.741.065** | **18,5 KB** |
-| as 7 funcoes somadas | 762.875 | 8,1 KB |
-
-**Um unico log group responde por 70% da ingestao** — mais que o dobro das sete
-funcoes juntas. A causa esta declarada em `infra/statemachine.tf`:
-`include_execution_data = true` grava a **entrada e a saida de cada estado** de
-cada execucao. Com nove estados por execucao e a equacao inteira viajando no
-payload, sao 18,5 KB por equacao resolvida.
-
-**A medicao.** Duas cargas identicas de 30 equacoes com 20% de caos, a segunda
-com o parametro desligado:
-
-| | bytes | execucoes | por execucao | por evento |
-| --- | --- | --- | --- | --- |
-| `include_execution_data = true` | 546.813 | 29 | 18.856 B | 622,1 B |
-| `include_execution_data = false` | 209.824 | 30 | **6.994 B** | **302,8 B** |
-
-**−63% de bytes por execucao** no log da state machine, ou −51% por evento. No
-sistema inteiro, a ingestao cai de 26,6 KB para 15,1 KB por execucao — **−43%**.
-
-A US$ 0,50/GB, 100.000 execucoes custariam US$ 0,94 so nesse log group contra
-US$ 0,35 depois. **Cinquenta e nove centavos por 100.000 execucoes** — e o
-numero honesto, e ele e pequeno. O argumento aqui nao e a fatura desta conta: e
-que 43% de um custo que cresce linearmente com o uso desaparece sem que nada
-importante saia junto.
-
-**O que sobrevive, verificado evento a evento.** Esta era a duvida que impedia a
-adocao, e a resposta so podia vir da medicao:
-
-| campo | usado para | sobrevive? |
-| --- | --- | --- |
-| `details.name` em `StateEntered` / `StateExited` | todos os contadores e o diagrama do painel | **sim** |
-| `details.error` e `details.cause` em `LambdaFunctionFailed` | o motivo da falha na linha do tempo | **sim** |
-| `details.output` em `StateExited` | o texto de detalhe de cada passo (`delta = 49`, `x1=3`) | **nao** |
-
-Com o parametro desligado, o `GET /flow` devolveu os contadores completos —
-`Validate` 30/30, `Delta` 30/30 com 3 falhas, `RootsInParallel` 11/11,
-`Persist` 28/28 — e a linha do tempo com estado e duracao de cada passo. Apenas
-o campo `detail` veio vazio, exatamente como previsto.
-
-**O plano B, e uma correcao do que este relatorio dizia antes.** A versao
-anterior deste documento afirmava que o detalhe passaria a vir de
-`GetExecutionHistory`, "que o codigo ja implementa". **Estava errado.** O
-`status` ja fazia a chamada, com `includeExecutionData=True`, mas extraia
-apenas tipo, estado, horario e erro — nunca o `output`. O plano B nao existia;
-existia o meio dele.
-
-A correcao e uma linha, e agora esta no codigo, com quatro testes:
-
-```python
-"detail": summarize(details.get("output")),
-```
-
-Verificado contra a AWS com o log **sem** execution data, o detalhe sob demanda
-voltou inteiro:
-
-```text
-Validate         a=-3 b=-36 c=-60
-Delta            delta = 576
-RootsInParallel  x1=-10  x2=-2
-Persist          gravada
-```
-
-A API nao depende da configuracao de log: ela entrega entrada e saida de
-qualquer jeito. O que muda e **quando** o payload e pago — em toda execucao,
-para sempre, no log; ou so nas execucoes que alguem abre, na API.
-
-**Por que fica desligada mesmo assim.** `var.state_machine_execution_data`
-continua com o padrao `true`, e a razao nao e tecnica: a stack do Checkpoint 3
-esta no ar para correcao, e a linha do tempo agregada do painel — com o detalhe
-inline em cada passo — e parte daquela entrega. Trocar o comportamento dela
-enquanto esta sendo avaliada seria otimizar o artefato errado.
-
-Depois da correcao do CP3, e uma palavra:
+Depois da correção sair, é uma linha de comando:
 
 ```bash
 terraform apply -var 'state_machine_execution_data=false'
 ```
 
-### Otimizacao 3 — colapsar o `Parallel` das raizes num unico estado
+### O cálculo em paralelo custa muito mais do que a conta que ele faz
 
-**Estado: proposta, com o custo medido e uma recomendacao qualificada.**
+![Execução no Step Functions](evidencias/07-step-functions-parallel.png)
 
-**O problema.** Quando Δ > 0, o fluxo abre um `Parallel` com dois ramos, cada um
-invocando a funcao `root` para calcular uma raiz. O custo medido de cada conta:
+Quando a equação tem duas raízes distintas, o fluxo abre dois ramos
+concorrentes, um para cada raiz. O tempo medido de cada cálculo é de **31
+microssegundos**.
 
-| estado | p50 | p95 |
-| --- | --- | --- |
-| `RootX1` | 0,031 ms | 0,039 ms |
-| `RootX2` | 0,032 ms | 0,034 ms |
+Para fazer 62 microssegundos de aritmética, o fluxo gasta duas invocações de
+função com tempo cobrado de 9 milésimos cada, três transições de estado em vez
+de uma, e duas das dez execuções simultâneas que a conta permite. Essa última
+parte é a que importa. A análise mostrou que o recurso escasso deste sistema é
+capacidade de execução simultânea, muito antes de ser processador.
 
-**Trinta e um microssegundos.** Para fazer 0,063 ms de aritmetica somada, o
-fluxo gasta:
-
-- 2 invocacoes de Lambda, com `billed_ms` medio de 9,05 ms cada — **288 vezes o
-  tempo da conta**;
-- ~3 transicoes de state machine em vez de 1;
-- 2 slots do teto de 10 execucoes concorrentes da conta.
-
-**O ganho.** Por 1.000 execucoes com Δ > 0: 2.000 transicoes a menos
-(US$ 0,05), 1.000 invocacoes a menos (centavos), e — o que importa — **1.000
-ocupacoes a menos** do recurso que a analise de performance identificou como
-escasso. Os 10 throttles da funcao `root` na carga medida sao consequencia
-direta disto.
-
-**A recomendacao e qualificada, e isso e deliberado.** O Checkpoint 3 ja
-registrava, no cabecalho do proprio `root/handler.py`, que a divisao e escolha
-**de demonstracao e nao de desempenho** — o objeto daquele checkpoint era
-mostrar o `Parallel` funcionando. A medicao nao contradiz aquela decisao: ela a
-quantifica.
-
-Entao a proposta e condicional:
-
-- **em producao**, colapsar `RootsInParallel` num unico estado `Roots` que
-  devolve as duas raizes — o `Persist` ja aceita a mesma forma, porque o
-  caminho de Δ = 0 (`RootDouble`) ja faz exatamente isso;
-- **neste repositorio**, manter como esta, porque o `Parallel` e o que o
-  Checkpoint 3 entrega, e apaga-lo destruiria a evidencia da entrega anterior.
-
-Propor "remova o `Parallel`" sem essa distincao seria confundir um artefato
-didatico com um defeito.
+A recomendação aqui é condicional de propósito. O Checkpoint 3 já registrava no
+próprio código que essa divisão foi feita para demonstrar o recurso de execução
+paralela, com finalidade didática. A medição não contradiz aquela decisão, ela
+apenas coloca um número nela. Em produção, o caminho seria juntar os dois ramos
+numa etapa só, que é exatamente o que o fluxo já faz no caso da raiz dupla.
+Neste repositório o paralelo fica, porque apagá-lo destruiria a evidência da
+entrega anterior.
 
 ---
 
-## 5. O que a instrumentacao mudou na forma de trabalhar
+## Duas observações que valem mais que as otimizações
 
-Tres coisas que so aparecem depois de instrumentar, e que valem mais que
-qualquer uma das otimizacoes:
+**Nenhuma falha da carga foi real.** Os 40 erros registrados batem exatamente
+com as 40 falhas que o modo caos injetou de propósito. Sem a medida que separa
+as duas coisas, a leitura seria "o sistema falhou 42% das vezes", uma conclusão
+errada tirada de dados corretos. Essa medida quase foi cortada durante o
+projeto por questão de custo.
 
-**O p95 e uma pergunta, nao um numero.** Um p95 de 5,9 segundos ao lado de um
-p50 de 13 ms nao diz "esta lento" — diz "ha duas populacoes aqui". A metrica
-por si nao resolveu nada; a **consulta seguinte**, separando frio de quente,
-resolveu.
-
-**Medir a falha injetada foi o que impediu a conclusao errada.** Os 40 erros da
-carga eram os 40 caos. A metrica que quase foi cortada por custo de
-cardinalidade e a que separa "o sistema falhou" de "eu mandei o sistema
-falhar".
-
-**A instrumentacao corrigiu uma decisao bem-intencionada do checkpoint
-anterior.** O boto3 preguicoso foi escrito para economizar; ele custava 6
-segundos. Sem medicao, ele continuaria la, com um comentario explicando por que
-era uma boa ideia.
-
-**Verificar a saida de uma otimizacao vale tanto quanto medir a entrada.** A
-otimizacao 2 dependia de um plano B que este relatorio afirmava ja existir no
-codigo. Existia a chamada de API, nao a extracao do dado — a otimizacao teria
-sido adotada e o painel teria perdido o detalhe em silencio. Quem encontrou foi
-o teste de ponta a ponta contra a AWS, nao a leitura do codigo.
+**A instrumentação corrigiu uma decisão bem-intencionada.** A conexão preguiçosa
+do banco foi escrita para economizar, com um comentário explicando por quê. Ela
+custava seis segundos. Sem medir, continuaria lá, parecendo uma boa ideia.
 
 ---
 
-## 6. O que ficou de fora, e por que
+## Os alarmes
 
-- **Instrumentar os Checkpoints 1 e 2.** Os tres estilos arquiteturais convivem
-  no CP3 — borda HTTP sincrona, coreografia por fila e orquestracao. Observar os
-  outros dois repositorios veria as mesmas coisas em sistemas menores.
-- **Metricas do CloudWatch dentro do painel web.** Exigiria IAM novo e
-  `GetMetricData` cobrado por requisicao, a cada poll de 2 segundos. O dashboard
-  do CloudWatch ja e a tela de metrica.
-- **Alarme com notificacao ativa.** O topico SNS existe; a inscricao por e-mail
-  fica em `var.alert_email`, vazia por padrao, porque exige confirmacao manual
-  por link que o Terraform nao completa.
-- **Adotar a otimizacao 2 agora.** Ela esta confirmada e a chave esta no lugar
-  (`var.state_machine_execution_data`), mas o padrao continua `true` enquanto a
-  stack do Checkpoint 3 estiver em correcao: a linha do tempo com detalhe
-  inline e parte daquela entrega.
-- **Aumentar a memoria das funcoes.** Era a candidata 3 original. Depois da
-  otimizacao 1, o `persist` quente roda em 14 ms e a memoria de pico e 95 MB de
-  128 — aumentar so faria sentido se a duracao ainda fosse dominada por CPU, e
-  nao e mais. **A otimizacao 1 tornou esta desnecessaria**, e propo-la assim
-  mesmo seria encher a lista.
-- **Provisioned concurrency para eliminar cold start.** Impossivel nesta conta:
-  a AWS exige deixar 10 execucoes nao reservadas, e o teto total e 10.
+![Alarmes](evidencias/06-alarmes.png)
+
+Cinco alarmes, e um deles disparou sozinho durante a carga de teste, sem ter
+sido forçado: a fila de mensagens recusadas recebeu conteúdo e o alarme reagiu.
+
+Os outros quatro ficaram em OK, incluindo o de execuções falhando. O limite dele
+foi posto em cinco justamente para não disparar durante uma demonstração com
+falhas injetadas, e não disparou. Um alarme que toca toda vez que a demonstração
+roda é um alarme que as pessoas aprendem a ignorar.
+
+---
+
+## O rastreamento ponta a ponta
+
+![Service map do X-Ray](evidencias/05-xray-service-map.png)
+
+O mapa mostra o caminho completo de uma requisição: o cliente, a função que
+recebe o pedido, a que traduz mensagem em execução, a máquina de estados, as
+quatro funções de cálculo e a fila que recebe o que foi recusado. O arco
+vermelho no centro são as execuções que terminaram recusadas.
+
+---
+
+## Quanto custa
+
+Uma demonstração inteira de 120 equações cabe na camada gratuita da AWS em
+todos os serviços: execuções, funções, filas, banco, log e rastreamento.
+
+O custo real aparece em outro lugar. As 24 séries de medidas customizadas são
+cobradas por mês, existindo elas sendo usadas ou não. São dez gratuitas e
+US$ 0,30 por cada uma acima disso, o que dá **US$ 4,20 por mês** no teto.
+
+Isso corrige uma afirmação do Checkpoint 3. O README dizia que nenhum recurso
+tinha custo fixo, e depois deste checkpoint isso deixou de ser verdade. A frase
+foi trocada em vez de continuar lá por inércia.
+
+O valor acima é teto, não previsão. A documentação da AWS indica que essas
+medidas são cobradas proporcionalmente às horas em que recebem dado, e um
+laboratório só publica durante as demonstrações. Isso não foi conferido na
+fatura, então o número que se deve assumir é o cheio.
+
+---
+
+## O que ficou de fora, e por quê
+
+**Instrumentar os Checkpoints 1 e 2.** Os três estilos de arquitetura já
+convivem no Checkpoint 3, que tem entrada por HTTP, fila e orquestração no mesmo
+sistema. Observar os outros dois repositórios veria as mesmas coisas em sistemas
+menores.
+
+**Aumentar a memória das funções.** Era uma candidata antes da primeira
+otimização. Depois dela, a função de gravação roda em 14 milésimos e usa 95 MB
+dos 128 disponíveis. Aumentar só faria sentido se o tempo ainda fosse dominado
+por processador, o que deixou de ser o caso.
+
+**Eliminar as inicializações do zero reservando capacidade.** A AWS exige deixar
+dez execuções não reservadas, e o limite total da conta é dez. Não há como fazer
+nesta conta.
+
+**Notificação por e-mail nos alarmes.** O tópico existe e a inscrição está
+pronta numa variável, vazia por padrão. Inscrever um e-mail exige uma
+confirmação manual por link que o Terraform não consegue completar sozinho.
+
+**O painel web do projeto entre as evidências.** Abri-lo exige digitar a chave
+de API na tela, e uma captura com a chave visível seria uma credencial
+versionada num repositório público.
+
+---
+
+## Três defeitos que só a captura de tela encontrou
+
+Vale registrar, porque nenhum deles apareceria nos testes nem no `terraform
+apply`, que passavam nos três casos.
+
+O quadro de log do painel respondia "nenhum dado encontrado". A consulta estava
+montada com um erro de aspas, e o CloudWatch reportou isso como ausência de
+dados em vez de erro de sintaxe. A segunda tentativa de correção também estava
+errada, e essa falhou de forma visível, reclamando de uma vírgula. A forma que
+funciona usa um seletor por prefixo, que ainda tem a vantagem de pegar uma
+oitava função automaticamente se ela existir um dia.
+
+O terceiro caso não era defeito. O quadro de recusas ficava vazio porque
+nenhuma carga anterior tinha pedido equações inválidas. O dado não existia e o
+quadro estava certo ao dizer isso.
+
+---
+
+## Onde está cada coisa
+
+| | |
+| --- | --- |
+| Números brutos das medições | [`evidencias/medicoes.md`](evidencias/medicoes.md) |
+| Telas do console | [`evidencias/`](evidencias/) |
+| Texto pronto para o Canvas | [`entrega-canvas.md`](entrega-canvas.md) |
+| Decisão de cada ciclo | [`cycle-08.md`](cycle-08.md) a [`cycle-13.md`](cycle-13.md) |
+| Plano original | [`especificacao-cp4.md`](especificacao-cp4.md) |
+| Infraestrutura do painel e dos alarmes | [`../infra/observability.tf`](../infra/observability.tf) |

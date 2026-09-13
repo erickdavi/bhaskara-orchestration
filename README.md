@@ -17,8 +17,7 @@ distribuído, dashboard e alarmes.
 > enunciado pede — ele não pede um sistema novo, pede para instrumentar o que já
 > existe. O relatório com a análise de performance, de custo e as três
 > otimizações está em **[`docs/observabilidade.md`](docs/observabilidade.md)**,
-> as sete telas do console em
-> [`docs/evidencias/`](docs/evidencias/README.md) e os números medidos em
+> com as sete telas do console no meio do texto. Os números brutos ficam em
 > [`docs/evidencias/medicoes.md`](docs/evidencias/medicoes.md).
 >
 > O [Checkpoint 1](https://github.com/erickdavi/bhaskara-api) é uma API
