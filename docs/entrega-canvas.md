@@ -1,6 +1,7 @@
 # Entrega no Canvas — Checkpoint 4
 
-Dois campos. O primeiro é o link; o segundo é para colar o bloco abaixo.
+Dois campos. O primeiro recebe o link; o segundo recebe o bloco de texto que
+começa depois da linha divisória.
 
 ---
 
@@ -11,8 +12,8 @@ https://github.com/erickdavi/bhaskara-orchestration
 ```
 
 O enunciado pede para instrumentar o pipeline dos checkpoints anteriores, então
-a entrega vive no mesmo repositório do Checkpoint 3. A tag `cp3-entrega` marca
-o estado que foi entregue lá, para que a correção daquele checkpoint continue
+a entrega vive no mesmo repositório do Checkpoint 3. A tag `cp3-entrega` marca o
+estado que foi entregue naquele checkpoint, para que a correção dele continue
 possível.
 
 ---
@@ -27,86 +28,97 @@ Copiar daqui para baixo.
 Repositório: https://github.com/erickdavi/bhaskara-orchestration
 Relatório completo, com as telas do console: `docs/observabilidade.md`
 
-O sistema do Checkpoint 3 resolve equações do segundo grau numa esteira de cinco
-funções Lambda orquestradas por Step Functions. Ele funcionava, mas não havia
-como enxergar o que acontecia lá dentro enquanto rodava. Este checkpoint
-instalou log estruturado, métricas de negócio, rastreamento distribuído no
-X-Ray, um painel do CloudWatch, cinco alarmes e cinco consultas salvas — tudo
-declarado em Terraform.
+O sistema instrumentado é o do Checkpoint 3, que resolve equações do segundo
+grau numa esteira de cinco funções Lambda orquestradas pelo Step Functions, com
+fila de entrada, banco DynamoDB e fila de mensagens recusadas. Ele funcionava,
+porém era opaco por dentro: cada função registrava log do seu próprio jeito e
+não havia nenhuma métrica além das que a AWS emite sozinha, que contam
+invocações e erros sem saber o que é uma equação.
 
-As otimizações abaixo saem de cargas reais medidas na AWS.
+A instrumentação seguiu quatro frentes. A primeira padronizou o formato do log,
+de modo que toda linha carregue os mesmos campos e uma equação possa ser
+rastreada pelas cinco funções a partir do identificador dela. A segunda criou
+onze métricas de negócio, escritas dentro da própria linha de log para que
+nenhuma chamada de API extra entre no caminho de execução. A terceira ligou o
+rastreamento distribuído do X-Ray, que o Checkpoint 3 havia deixado desligado
+com justificativa registrada no código. A quarta reuniu tudo num painel do
+CloudWatch, com cinco alarmes e cinco consultas salvas, tudo declarado em
+Terraform. As três otimizações abaixo saem dos dados que essas quatro frentes
+produziram em cargas reais na AWS.
 
-**1. Corrigir onde a conexão com a AWS é criada. Implementada e medida.**
-A medição de tempo por etapa mostrou uma anomalia: a etapa de gravação levava 13
-milésimos de segundo na maioria das vezes e quase 6 segundos em 5% dos casos.
-Separando as invocações que rodavam numa função já aquecida das que precisavam
-inicializar, a lentidão inteira estava nas frias. Mas o tempo de inicialização
-em si era de apenas 83 milésimos, então os seis segundos estavam acontecendo
-depois, já dentro do processamento.
+**Primeira otimização — onde a conexão com a AWS é criada. Implementada e
+medida.** A consulta de duração por etapa mostrou que a gravação levava treze
+milésimos de segundo na maior parte das vezes e quase seis segundos em cinco por
+cento dos casos. Separando as invocações frias das quentes, a lentidão inteira
+estava nas frias, mas o tempo de inicialização em si era de apenas oitenta e
+três milésimos, o que indicava que os seis segundos aconteciam já dentro do
+processamento. A causa era o cliente do banco de dados criado de forma
+preguiçosa, apenas no primeiro uso, decisão tomada no checkpoint anterior para
+deixar a inicialização leve. O efeito era o oposto, porque a AWS concede
+processamento ampliado durante a inicialização e o raciona depois, de forma que
+o trabalho pesado acontecia na janela mais cara. Movendo a criação da conexão
+para o carregamento do módulo, medido com duas cargas idênticas de cento e vinte
+equações, a invocação fria caiu de 5.972 para 243 milissegundos, o tempo cobrado
+médio caiu de 632 para 87 milissegundos e a latência da fila até o resultado
+caiu de 7.890 para 3.120 milissegundos nos cinco por cento piores casos. Em
+dinheiro a economia é uma fração de centavo nesta escala; o ganho está na espera
+e na capacidade liberada, já que a conta permite apenas dez execuções
+simultâneas.
 
-A causa era uma decisão do checkpoint anterior: o cliente do banco de dados era
-criado de forma preguiçosa, só na primeira vez que fosse usado, para manter a
-inicialização leve. O efeito era o contrário do pretendido, porque a AWS dá
-bastante processador durante a inicialização e raciona depois. O trabalho pesado
-estava sendo feito justamente na janela em que custa mais caro.
+**Segunda otimização — o volume de log da máquina de estados. Confirmada e
+medida, desligada por escolha.** Comparando quanto cada componente escreve, a
+máquina de estados sozinha gerava 1,74 megabyte contra 763 kilobytes das sete
+funções somadas, respondendo por setenta por cento de tudo que o sistema
+registra. A causa é a configuração que grava a entrada e a saída de cada uma das
+nove etapas de cada execução. Testado com duas cargas iguais de trinta equações,
+desligar isso derruba o volume de 18.856 para 6.994 bytes por execução, uma
+redução de sessenta e três por cento naquele componente e de quarenta e três por
+cento no total. Inspecionando os eventos campo a campo, o nome da etapa e o
+motivo de uma falha continuam gravados, de modo que os contadores e o desenho do
+fluxo no painel seguem funcionando; perde-se apenas o texto de detalhe de cada
+passo, que passa a vir de uma chamada de API já existente no código. A
+otimização ficou desligada mesmo confirmada, porque a infraestrutura do
+Checkpoint 3 continua no ar para correção e esse detalhe faz parte daquela
+entrega. A chave para ligá-la está pronta numa variável do Terraform.
 
-A correção move a criação do cliente para o carregamento do módulo. Medido com
-duas cargas idênticas de 120 equações: a invocação fria da gravação caiu de
-5.972 ms para 243 ms, o tempo cobrado médio caiu de 632 ms para 87 ms, e o tempo
-total da fila até o resultado caiu de 7.890 ms para 3.120 ms nos piores 5%. Em
-dinheiro isso é uma fração de centavo nesta escala; o ganho está na espera e na
-capacidade liberada, já que a conta permite apenas dez execuções simultâneas.
+**Terceira otimização — o cálculo paralelo das duas raízes. Proposta, com
+ressalva.** Quando o discriminante é positivo, o fluxo abre dois ramos
+concorrentes e calcula uma raiz em cada um. Cada cálculo leva trinta e um
+microssegundos. Para executar sessenta e dois microssegundos de aritmética, o
+sistema gasta duas invocações de função com nove milissegundos cobrados cada,
+três transições de estado em vez de uma, e duas das dez execuções simultâneas
+que a conta permite, o que importa porque a análise apontou a capacidade
+simultânea como o recurso escasso deste sistema. A recomendação é condicional de
+propósito: o Checkpoint 3 já registrava no próprio código que essa divisão foi
+feita para demonstrar o recurso de execução paralela, com finalidade didática, e
+a medição apenas coloca um número naquela decisão. Em produção o caminho seria
+juntar os dois ramos numa etapa só, que é o que o fluxo já faz quando a raiz é
+dupla; neste repositório o paralelo permanece, porque removê-lo apagaria a
+evidência da entrega anterior.
 
-**2. Parar de gravar o conteúdo de cada etapa no log da máquina de estados.
-Confirmada e medida, desligada por escolha.**
-Um único grupo de log respondia por 70% de tudo que o sistema escreve: 1,74 MB
-contra 763 KB das sete funções somadas. A causa é uma configuração que grava a
-entrada e a saída de cada uma das nove etapas de cada execução.
+Vale registrar uma observação que talvez valha mais que as três otimizações. Os
+quarenta erros registrados durante a carga de teste coincidem exatamente com as
+quarenta falhas que o modo de caos injetou de propósito. Sem a métrica que
+separa uma coisa da outra, a leitura seria de que o sistema falhou em quarenta e
+dois por cento das execuções, uma conclusão errada extraída de dados corretos.
 
-Testado com duas cargas iguais de 30 equações, desligar isso derruba o volume de
-18.856 para 6.994 bytes por execução, uma redução de 63% naquele grupo e de 43%
-em tudo que o sistema escreve. Verificando evento a evento o que se perde: o
-nome da etapa continua gravado, então todos os contadores e o desenho do fluxo
-no painel seguem funcionando, e o motivo de uma falha também continua. Some
-apenas o texto de detalhe de cada passo, que passa a vir de uma chamada de API
-que o código já fazia para outro caminho.
+Sobre o custo da própria observabilidade, uma demonstração completa cabe na
+camada gratuita da AWS em todos os serviços envolvidos, mas as vinte e quatro
+séries de métricas customizadas são cobradas por mês independentemente do uso, o
+que dá até quatro dólares e vinte centavos mensais. Isso invalidou uma afirmação
+do Checkpoint 3 de que a infraestrutura não tinha recurso de custo fixo, e o
+README foi corrigido.
 
-Ficou desligada mesmo assim, por um motivo que não é técnico: a stack do
-Checkpoint 3 está no ar sendo corrigida, e o detalhe em cada passo faz parte
-daquela entrega. A chave está pronta numa variável do Terraform.
-
-**3. Juntar o cálculo das duas raízes numa etapa só. Proposta, com ressalva.**
-Quando a equação tem duas raízes distintas, o fluxo abre dois ramos paralelos.
-Cada cálculo leva 31 microssegundos. Para fazer isso, o fluxo gasta duas
-invocações de função com 9 milésimos cobrados cada, três transições de estado em
-vez de uma, e duas das dez execuções simultâneas da conta.
-
-A recomendação é condicional de propósito. O Checkpoint 3 já registrava no
-próprio código que essa divisão foi feita para demonstrar o recurso de execução
-paralela, com finalidade didática. A medição não contradiz aquela decisão, só
-coloca um número nela. Em produção o caminho seria juntar os dois ramos, que é o
-que o fluxo já faz no caso da raiz dupla. Neste repositório o paralelo fica,
-porque removê-lo apagaria a evidência da entrega anterior.
-
-**Uma observação que vale mais que as três.** Os 40 erros registrados na carga
-batem exatamente com as 40 falhas que o modo caos injetou de propósito. Sem a
-métrica que separa falha pedida de falha real, a leitura seria "o sistema falhou
-42% das vezes", uma conclusão errada tirada de dados corretos.
-
-**Sobre o custo da observabilidade.** O Checkpoint 3 afirmava que a stack não
-tinha nenhum recurso com custo fixo, e isso deixou de valer. As 24 séries de
-métricas customizadas são cobradas por mês: dez são gratuitas e as demais custam
-US$ 0,30 cada, o que dá US$ 4,20 mensais no teto. O README foi corrigido.
-
-**Segurança.** Nenhuma credencial no repositório. A chave de API é gerada pelo
-Terraform e sai por `terraform output`; a URL da função ativa não está
-versionada. Varredura de segredos feita no histórico inteiro. O `checkov` passa
-com 167 verificações e nenhuma reprovação, e o `trivy` não acusa nada de
-severidade média ou superior.
+Quanto à segurança, não há credencial no repositório. A chave de API é gerada
+pelo Terraform e sai por `terraform output`, a URL da função ativa não está
+versionada, e o número da conta foi tarjado nas telas de evidência. A varredura
+de segredos cobriu o histórico inteiro do Git. O `checkov` passa com 167
+verificações e nenhuma reprovação, e o `trivy` não acusa achados de severidade
+média ou superior.
 
 ---
 
-## Endpoints ativos, se for entregar a URL viva
+## Endpoints ativos, caso queira entregar a URL viva
 
 Rodar antes de colar. Nenhum destes valores está versionado:
 
