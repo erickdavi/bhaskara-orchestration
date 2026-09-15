@@ -24,50 +24,26 @@ Copiar daqui para baixo.
 
 ---
 
-**Checkpoint 4 — Observabilidade**
+Checkpoint 4 — Observabilidade
 Repositório: https://github.com/erickdavi/bhaskara-orchestration
-Relatório completo, com as telas do console: `docs/observabilidade.md`
+Relatório completo, com as telas do console: docs/observabilidade.md
 
-O sistema instrumentado é o do Checkpoint 3, que resolve equações do segundo
-grau numa esteira de cinco funções Lambda orquestradas pelo Step Functions. A
-instrumentação seguiu quatro frentes: um formato único de log que permite
-rastrear uma equação pelas cinco funções a partir do identificador dela, onze
-métricas de negócio escritas dentro da própria linha de log, sem chamada de API
-extra no caminho de execução, o rastreamento distribuído do X-Ray, e um painel
-do CloudWatch com cinco alarmes e cinco consultas salvas, tudo em Terraform.
-
-**Primeira otimização, implementada e medida.** A duração por etapa mostrou a
-gravação levando treze milésimos de segundo na maior parte das vezes e quase
-seis segundos em cinco por cento dos casos, toda a lentidão concentrada nas
-invocações frias. A causa era o cliente do banco de dados criado de forma
-preguiçosa no primeiro uso, decisão do checkpoint anterior para deixar a
-inicialização leve. O efeito era o oposto, porque a AWS concede processamento
-ampliado durante a inicialização e o raciona depois. Movendo a criação para o
-carregamento do módulo, a invocação fria caiu de 5.972 para 243 milissegundos e
-a latência da fila até o resultado caiu de 7.890 para 3.120 milissegundos nos
-piores cinco por cento.
-
-**Segunda otimização, confirmada e medida.** A máquina de estados respondia por
-setenta por cento de todo o log do sistema, por gravar a entrada e a saída de
-cada uma das nove etapas. Desligar esse registro reduz o volume em sessenta e
-três por cento naquele componente e quarenta e três por cento no total,
-preservando os contadores e o desenho do fluxo no painel. Ficou desligada porque
-a infraestrutura do Checkpoint 3 segue no ar para correção e o detalhe removido
-faz parte daquela entrega.
-
-**Terceira otimização, proposta.** O cálculo paralelo das duas raízes leva trinta
-e um microssegundos por raiz, e gasta para isso duas invocações de função, três
-transições de estado e duas das dez execuções simultâneas que a conta permite. A
-recomendação vale para produção; aqui o paralelo permanece, porque foi
-construído no Checkpoint 3 para demonstrar o recurso.
-
-Uma observação que talvez valha mais que as três: os quarenta erros da carga de
-teste coincidem exatamente com as quarenta falhas que o modo de caos injetou.
-Sem a métrica que separa as duas, a leitura seria de quarenta e dois por cento
-de falha, uma conclusão errada extraída de dados corretos.
-
-Não há credencial no repositório: a chave de API sai por `terraform output`, a
-URL ativa não está versionada e o número da conta foi tarjado nas telas.
+O pipeline do Checkpoint 3 foi instrumentado com log estruturado que permite
+rastrear uma equação pelas cinco funções, onze métricas de negócio escritas
+dentro da própria linha de log, rastreamento distribuído no X-Ray e um painel do
+CloudWatch com cinco alarmes, tudo declarado em Terraform. Os dados apontaram
+três otimizações. A primeira já está implementada: o cliente do banco era criado
+na primeira invocação, e não na inicialização da função, onde a AWS concede mais
+processamento, o que derrubava a invocação fria para quase seis segundos;
+corrigido, ela caiu para 243 milissegundos e a latência da fila até o resultado
+caiu de 7.890 para 3.120 milissegundos nos piores cinco por cento. A segunda
+está confirmada e desligada por escolha, já que a infraestrutura do Checkpoint 3
+segue em correção: o log da máquina de estados respondia por setenta por cento
+do volume total, e desligar o registro do conteúdo de cada etapa corta quarenta
+e três por cento de tudo que o sistema escreve, preservando os contadores do
+painel. A terceira é proposta para produção: o cálculo paralelo das duas raízes
+gasta duas invocações de função e três transições de estado para trinta e um
+microssegundos de aritmética por raiz.
 
 ---
 
