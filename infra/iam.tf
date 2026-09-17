@@ -132,6 +132,27 @@ locals {
   }
 }
 
+# A fronteira de permissao vem da camada de bootstrap, aplicada uma vez so a
+# partir da maquina de quem mantem o projeto. Ler o state dela em vez de repetir
+# o ARN aqui deixa a dependencia explicita: se o bootstrap nao existe, a stack
+# nao aplica, o que e melhor do que aplicar sem a fronteira e ninguem notar.
+data "terraform_remote_state" "bootstrap" {
+  backend = "s3"
+
+  config = {
+    bucket = "bhaskara-orchestration-tfstate-405449670138"
+    key    = "bootstrap/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
+locals {
+  # Teto de permissao de toda funcao de acesso deste projeto. Ver
+  # infra/bootstrap/policies.tf: o pipeline so consegue criar funcao que a
+  # carregue, e nao tem permissao para remove-la depois.
+  permissions_boundary = data.terraform_remote_state.bootstrap.outputs.permissions_boundary_arn
+}
+
 data "aws_iam_policy_document" "lambda_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -146,8 +167,9 @@ data "aws_iam_policy_document" "lambda_assume" {
 resource "aws_iam_role" "function" {
   for_each = local.functions
 
-  name               = "${local.name_prefix}-${each.key}-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  name                 = "${local.name_prefix}-${each.key}-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume.json
+  permissions_boundary = local.permissions_boundary
 }
 
 resource "aws_iam_role_policy" "function" {
@@ -180,8 +202,9 @@ data "aws_iam_policy_document" "states_assume" {
 }
 
 resource "aws_iam_role" "state_machine" {
-  name               = "${local.name_prefix}-states-role"
-  assume_role_policy = data.aws_iam_policy_document.states_assume.json
+  name                 = "${local.name_prefix}-states-role"
+  assume_role_policy   = data.aws_iam_policy_document.states_assume.json
+  permissions_boundary = local.permissions_boundary
 }
 
 resource "aws_iam_role_policy" "state_machine" {

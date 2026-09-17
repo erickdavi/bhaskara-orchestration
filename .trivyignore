@@ -51,3 +51,12 @@ AWS-0090
 # nao deveria existir amanha. Perder a tabela inteira custa uma nova
 # demonstracao de 30 segundos.
 AWS-0024
+
+# --- Checkpoint 5 -----------------------------------------------------------
+#
+# AWS-0136 pede chave propria no topico SNS dos alarmes. O topico ja e
+# criptografado com alias/aws/sns, gerenciada pela AWS e sem custo mensal; uma
+# chave propria custaria US$ 1/mes para proteger uma mensagem que diz "a fila de
+# recusadas tem item". Entrou no ciclo 11 e so apareceu na varredura do ciclo 14,
+# quando o relatorio passou a ser lido por severidade e nao pelo resumo.
+AWS-0136
