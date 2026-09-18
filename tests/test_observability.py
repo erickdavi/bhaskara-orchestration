@@ -11,9 +11,8 @@ consulta que correlaciona uma equacao pelos seus sete estados.
 
 import json
 
-import pytest
-
 import observability
+import pytest
 from observability import ERROR, INFO, WARN, invocation
 
 
@@ -35,7 +34,7 @@ def task_event(**extra):
 def line(capsys):
     saida = capsys.readouterr().out.strip().splitlines()
 
-    assert len(saida) == 1, "esperava uma linha, veio %d" % len(saida)
+    assert len(saida) == 1, f"esperava uma linha, veio {len(saida)}"
 
     return json.loads(saida[0])
 
@@ -81,7 +80,9 @@ def test_a_linha_e_json_de_uma_linha_so(capsys):
 
 
 def test_o_envelope_vem_antes_dos_campos_do_evento(capsys):
-    invocation("delta", task_event(), Context())("delta_calculated", value=49, sign="positive")
+    invocation("delta", task_event(), Context())(
+        "delta_calculated", value=49, sign="positive"
+    )
 
     chaves = list(json.loads(capsys.readouterr().out).keys())
 
@@ -167,7 +168,9 @@ def test_todas_as_linhas_de_uma_invocacao_fria_sao_frias(capsys):
     log("um")
     log("dois")
 
-    registros = [json.loads(l) for l in capsys.readouterr().out.strip().splitlines()]
+    registros = [
+        json.loads(linha) for linha in capsys.readouterr().out.strip().splitlines()
+    ]
 
     assert [r["cold_start"] for r in registros] == [True, True]
 
@@ -186,7 +189,9 @@ def test_a_duracao_cresce_dentro_da_mesma_invocacao(capsys):
     log("um")
     log("dois")
 
-    registros = [json.loads(l) for l in capsys.readouterr().out.strip().splitlines()]
+    registros = [
+        json.loads(linha) for linha in capsys.readouterr().out.strip().splitlines()
+    ]
 
     assert registros[1]["duration_ms"] >= registros[0]["duration_ms"]
 
@@ -208,7 +213,9 @@ def test_quem_chama_pode_sobrescrever_o_envelope(capsys):
 
 
 def test_a_sobrescrita_nao_desloca_o_campo_para_o_fim(capsys):
-    invocation("dispatcher", {"Records": []}, Context())("execution_started", execution="k-xyz")
+    invocation("dispatcher", {"Records": []}, Context())(
+        "execution_started", execution="k-xyz"
+    )
 
     chaves = list(json.loads(capsys.readouterr().out).keys())
 
@@ -228,7 +235,9 @@ def test_valor_nao_serializavel_nao_derruba_o_handler(capsys):
     # DynamoDB, e um TypeError aqui faria a funcao falhar ao registrar sucesso.
     from decimal import Decimal
 
-    invocation("persist", task_event(), Context())("result_stored", value=Decimal("3.5"))
+    invocation("persist", task_event(), Context())(
+        "result_stored", value=Decimal("3.5")
+    )
 
     assert line(capsys)["value"] == "3.5"
 
@@ -237,4 +246,6 @@ def test_nan_nao_vira_json_invalido():
     # NaN e Infinity nao sao JSON pela RFC 8259, e o Logs Insights nao os
     # parseia: a linha inteira viraria texto opaco.
     with pytest.raises(ValueError):
-        invocation("delta", task_event(), Context())("delta_calculated", value=float("nan"))
+        invocation("delta", task_event(), Context())(
+            "delta_calculated", value=float("nan")
+        )

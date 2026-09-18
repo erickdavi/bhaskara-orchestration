@@ -8,8 +8,8 @@ como o fluxo inteiro tomando o ramo errado.
 import json
 
 import pytest
-
 from chaos import TransientFailure
+
 from src.handlers.delta.handler import lambda_handler
 
 
@@ -26,7 +26,10 @@ def event(a, b, c, meta=None, retry_count=0):
 
 
 def test_delta_positivo():
-    assert lambda_handler(event(1, -5, 6), Context()) == {"value": 1, "sign": "positive"}
+    assert lambda_handler(event(1, -5, 6), Context()) == {
+        "value": 1,
+        "sign": "positive",
+    }
 
 
 def test_delta_zero():
@@ -77,7 +80,10 @@ def test_caos_falha_e_depois_passa():
     with pytest.raises(TransientFailure):
         lambda_handler(event(1, -5, 6, meta=meta, retry_count=0), Context())
 
-    assert lambda_handler(event(1, -5, 6, meta=meta, retry_count=1), Context())["value"] == 1
+    assert (
+        lambda_handler(event(1, -5, 6, meta=meta, retry_count=1), Context())["value"]
+        == 1
+    )
 
 
 def test_caos_de_outro_estado_nao_afeta_este():

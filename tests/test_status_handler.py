@@ -39,7 +39,13 @@ def log_event(kind, arn=ARN, name=None, timestamp=1000, identifier=1, **details)
     if name:
         details["name"] = name
 
-    return {"id": identifier, "type": kind, "execution_arn": arn, "timestamp": timestamp, "details": details}
+    return {
+        "id": identifier,
+        "type": kind,
+        "execution_arn": arn,
+        "timestamp": timestamp,
+        "details": details,
+    }
 
 
 def execucao_completa(arn=ARN, base=1000):
@@ -47,9 +53,23 @@ def execucao_completa(arn=ARN, base=1000):
     return [
         log_event("ExecutionStarted", arn, timestamp=base, identifier=1),
         log_event("TaskStateEntered", arn, "Validate", base + 10, 2),
-        log_event("TaskStateExited", arn, "Validate", base + 40, 3, output=json.dumps({"validated": {"a": 1, "b": -5, "c": 6}})),
+        log_event(
+            "TaskStateExited",
+            arn,
+            "Validate",
+            base + 40,
+            3,
+            output=json.dumps({"validated": {"a": 1, "b": -5, "c": 6}}),
+        ),
         log_event("TaskStateEntered", arn, "Delta", base + 41, 4),
-        log_event("TaskStateExited", arn, "Delta", base + 70, 5, output=json.dumps({"delta": {"value": 1, "sign": "positive"}})),
+        log_event(
+            "TaskStateExited",
+            arn,
+            "Delta",
+            base + 70,
+            5,
+            output=json.dumps({"delta": {"value": 1, "sign": "positive"}}),
+        ),
         log_event("ExecutionSucceeded", arn, timestamp=base + 100, identifier=6),
     ]
 
@@ -88,9 +108,16 @@ def test_conta_entradas_por_estado():
 
 
 def test_conta_desfechos_das_execucoes():
-    eventos = execucao_completa() + [
+    eventos = [
+        *execucao_completa(),
         log_event("ExecutionStarted", OUTRA, timestamp=2000, identifier=1),
-        log_event("ExecutionFailed", OUTRA, timestamp=2100, identifier=2, error="EquationNotProcessed"),
+        log_event(
+            "ExecutionFailed",
+            OUTRA,
+            timestamp=2100,
+            identifier=2,
+            error="EquationNotProcessed",
+        ),
     ]
 
     assert aggregate(eventos)["counts"] == {"RUNNING": 0, "SUCCEEDED": 1, "FAILED": 1}
@@ -123,7 +150,15 @@ def test_estado_que_falhou_e_marcado_com_o_erro():
     eventos = [
         log_event("ExecutionStarted", timestamp=1000, identifier=1),
         log_event("TaskStateEntered", ARN, "Delta", 1010, 2),
-        log_event("TaskFailed", ARN, None, 1020, 3, error="TransientFailure", cause="falha simulada"),
+        log_event(
+            "TaskFailed",
+            ARN,
+            None,
+            1020,
+            3,
+            error="TransientFailure",
+            cause="falha simulada",
+        ),
     ]
 
     passo = aggregate(eventos)["executions"][0]["steps"][0]
@@ -174,13 +209,19 @@ def test_eventos_fora_de_ordem_sao_ordenados():
 
 
 def test_execucoes_mais_recentes_primeiro():
-    agregado = aggregate(execucao_completa(base=1000) + execucao_completa(OUTRA, base=5000))
+    agregado = aggregate(
+        execucao_completa(base=1000) + execucao_completa(OUTRA, base=5000)
+    )
 
     assert agregado["executions"][0]["arn"] == OUTRA
 
 
 def test_sem_eventos_a_resposta_e_vazia_e_nao_quebra():
-    assert aggregate([]) == {"states": {}, "executions": [], "counts": {"RUNNING": 0, "SUCCEEDED": 0, "FAILED": 0}}
+    assert aggregate([]) == {
+        "states": {},
+        "executions": [],
+        "counts": {"RUNNING": 0, "SUCCEEDED": 0, "FAILED": 0},
+    }
 
 
 # ----------------------------------------------------------------- resumo
@@ -196,13 +237,23 @@ def test_o_resumo_mostra_o_que_o_estado_acrescentou():
     }
 
     assert summarize(json.dumps(completo)) == "gravada"
-    assert summarize(json.dumps({k: completo[k] for k in ("validated", "delta", "result")})) == "x1=3"
-    assert summarize(json.dumps({k: completo[k] for k in ("validated", "delta")})) == "delta = 1"
+    assert (
+        summarize(
+            json.dumps({k: completo[k] for k in ("validated", "delta", "result")})
+        )
+        == "x1=3"
+    )
+    assert (
+        summarize(json.dumps({k: completo[k] for k in ("validated", "delta")}))
+        == "delta = 1"
+    )
     assert summarize(json.dumps({"validated": completo["validated"]})) == "a=1 b=-5 c=6"
 
 
 def test_o_resumo_distingue_duplicata():
-    assert summarize(json.dumps({"persisted": {"duplicate": True}})) == "ja estava gravada"
+    assert (
+        summarize(json.dumps({"persisted": {"duplicate": True}})) == "ja estava gravada"
+    )
 
 
 def test_o_resumo_nomeia_o_caminho_sem_raizes():
@@ -250,7 +301,13 @@ def test_sem_batch_id_nao_lista_resultados(aws):
 def test_a_dead_letter_e_espiada_sem_consumir(aws):
     aws["sqs"].send_message(
         QueueUrl=runtime.LOCAL_DEAD_LETTER_URL,
-        MessageBody=json.dumps({"source": "workflow", "equation": {"a": 0}, "error": {"Error": "InvalidEquation", "Cause": "a nao pode ser zero"}}),
+        MessageBody=json.dumps(
+            {
+                "source": "workflow",
+                "equation": {"a": 0},
+                "error": {"Error": "InvalidEquation", "Cause": "a nao pode ser zero"},
+            }
+        ),
     )
 
     _, corpo = call()
@@ -262,7 +319,9 @@ def test_a_dead_letter_e_espiada_sem_consumir(aws):
 
 def test_mensagem_movida_pelo_redrive_aparece_como_redrive(aws):
     """A DLQ nativa move o payload original, sem motivo — e isso precisa aparecer."""
-    aws["sqs"].send_message(QueueUrl=runtime.LOCAL_DEAD_LETTER_URL, MessageBody='{"a": 1, "b": 2, "c": 3}')
+    aws["sqs"].send_message(
+        QueueUrl=runtime.LOCAL_DEAD_LETTER_URL, MessageBody='{"a": 1, "b": 2, "c": 3}'
+    )
 
     _, corpo = call()
 
@@ -306,7 +365,12 @@ class HistoricoFalso:
         self.events = events
         self.pedido = None
 
-    def get_execution_history(self, executionArn=None, maxResults=None, includeExecutionData=None):  # noqa: N803
+    def get_execution_history(
+        self,
+        executionArn=None,  # noqa: N803 - assinatura do boto3, em CamelCase
+        maxResults=None,  # noqa: N803
+        includeExecutionData=None,  # noqa: N803
+    ):
         self.pedido = {
             "arn": executionArn,
             "maxResults": maxResults,
@@ -342,10 +406,12 @@ def test_o_historico_traz_o_detalhe_de_cada_estado(historico):
     jeito. Por isso o detalhe sob demanda tem de sair daqui — e este teste e o
     que garante que ele sai.
     """
-    historico([
-        saida_de_estado("Delta", {"delta": {"value": 49, "sign": "positive"}}),
-        saida_de_estado("Persist", {"persisted": {"duplicate": False}}),
-    ])
+    historico(
+        [
+            saida_de_estado("Delta", {"delta": {"value": 49, "sign": "positive"}}),
+            saida_de_estado("Persist", {"persisted": {"duplicate": False}}),
+        ]
+    )
 
     passos = status.history(ARN)["steps"]
 
@@ -366,16 +432,31 @@ def test_o_historico_pede_os_dados_de_execucao_explicitamente(historico):
 
 
 def test_estado_sem_saida_nao_inventa_detalhe(historico):
-    historico([{"type": "TaskStateEntered", "timestamp": 1, "stateEnteredEventDetails": {"name": "Validate"}}])
+    historico(
+        [
+            {
+                "type": "TaskStateEntered",
+                "timestamp": 1,
+                "stateEnteredEventDetails": {"name": "Validate"},
+            }
+        ]
+    )
 
     assert status.history(ARN)["steps"][0]["detail"] is None
 
 
 def test_o_historico_preserva_o_erro(historico):
-    historico([{
-        "type": "LambdaFunctionFailed",
-        "timestamp": 1,
-        "taskFailedEventDetails": {"error": "TransientFailure", "cause": "falha simulada"},
-    }])
+    historico(
+        [
+            {
+                "type": "LambdaFunctionFailed",
+                "timestamp": 1,
+                "taskFailedEventDetails": {
+                    "error": "TransientFailure",
+                    "cause": "falha simulada",
+                },
+            }
+        ]
+    )
 
     assert status.history(ARN)["steps"][0]["error"] == "TransientFailure"

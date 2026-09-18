@@ -32,11 +32,17 @@ def root(a, b, c, label):
     vezes o mesmo numero.
     """
     if label not in LABELS:
-        raise ValueError("Raiz desconhecida: %r. Esperado um de %s." % (label, ", ".join(LABELS)))
+        raise ValueError(
+            "Raiz desconhecida: {!r}. Esperado um de {}.".format(
+                label, ", ".join(LABELS)
+            )
+        )
 
     result = calculate(a, b, c)
 
     if "x1" not in result:
-        raise ValueError("A equacao nao tem raizes reais: delta = %s." % result["delta"])
+        raise ValueError(
+            "A equacao nao tem raizes reais: delta = {}.".format(result["delta"])
+        )
 
     return result["x1" if label == "double" else label]

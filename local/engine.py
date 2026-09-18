@@ -43,9 +43,11 @@ TERMINAL_TYPES = ("Succeed", "Fail")
 COMMON_FIELDS = {"Type", "Comment", "Next", "End"}
 
 ALLOWED_FIELDS = {
-    "Task": COMMON_FIELDS | {"Resource", "Parameters", "ResultSelector", "ResultPath", "Retry", "Catch"},
+    "Task": COMMON_FIELDS
+    | {"Resource", "Parameters", "ResultSelector", "ResultPath", "Retry", "Catch"},
     "Choice": COMMON_FIELDS | {"Choices", "Default"},
-    "Parallel": COMMON_FIELDS | {"Branches", "Parameters", "ResultSelector", "ResultPath", "Retry", "Catch"},
+    "Parallel": COMMON_FIELDS
+    | {"Branches", "Parameters", "ResultSelector", "ResultPath", "Retry", "Catch"},
     "Pass": COMMON_FIELDS | {"Result", "Parameters", "ResultPath"},
     "Succeed": COMMON_FIELDS,
     "Fail": COMMON_FIELDS | {"Error", "Cause"},
@@ -62,7 +64,14 @@ CHOICE_OPERATORS = (
     "IsPresent",
 )
 
-RETRY_FIELDS = {"ErrorEquals", "IntervalSeconds", "MaxAttempts", "BackoffRate", "JitterStrategy", "MaxDelaySeconds"}
+RETRY_FIELDS = {
+    "ErrorEquals",
+    "IntervalSeconds",
+    "MaxAttempts",
+    "BackoffRate",
+    "JitterStrategy",
+    "MaxDelaySeconds",
+}
 CATCH_FIELDS = {"ErrorEquals", "ResultPath", "Next"}
 
 ALL_ERRORS = "States.ALL"
@@ -81,7 +90,7 @@ class TaskFailure(Exception):
     """Falha nomeada de um estado, no formato que o Retry/Catch compara."""
 
     def __init__(self, error, cause=""):
-        super().__init__("%s: %s" % (error, cause))
+        super().__init__(f"{error}: {cause}")
         self.error = error
         self.cause = cause
 
@@ -90,7 +99,7 @@ class ExecutionFailed(Exception):
     """A execucao terminou em falha (estado Fail ou erro nao capturado)."""
 
     def __init__(self, error, cause=""):
-        super().__init__("%s: %s" % (error, cause))
+        super().__init__(f"{error}: {cause}")
         self.error = error
         self.cause = cause
 
@@ -127,7 +136,11 @@ class Execution:
         return event
 
     def states_entered(self):
-        return [e["details"]["name"] for e in self.events if e["type"].endswith("StateEntered")]
+        return [
+            e["details"]["name"]
+            for e in self.events
+            if e["type"].endswith("StateEntered")
+        ]
 
     def as_dict(self):
         return {
@@ -153,51 +166,69 @@ def validate_definition(definition):
 
 def _validate_states(states, start_at, prefix):
     if start_at not in states:
-        raise Unsupported("StartAt %r%s nao existe em States." % (start_at, prefix))
+        raise Unsupported(f"StartAt {start_at!r}{prefix} nao existe em States.")
 
     for name, state in states.items():
-        where = "%s%s" % (prefix, name)
+        where = f"{prefix}{name}"
         state_type = state.get("Type")
 
         if state_type not in ALLOWED_FIELDS:
-            raise Unsupported("Tipo de estado nao suportado em %s: %r." % (where, state_type))
+            raise Unsupported(
+                f"Tipo de estado nao suportado em {where}: {state_type!r}."
+            )
 
         unknown = set(state) - ALLOWED_FIELDS[state_type]
 
         if unknown:
-            raise Unsupported("Campos nao suportados em %s: %s." % (where, ", ".join(sorted(unknown))))
+            raise Unsupported(
+                "Campos nao suportados em {}: {}.".format(
+                    where, ", ".join(sorted(unknown))
+                )
+            )
 
-        if state_type not in TERMINAL_TYPES and state_type != "Choice":
-            if not state.get("End") and not state.get("Next"):
-                raise Unsupported("O estado %s nao tem Next nem End." % where)
+        if (
+            state_type not in TERMINAL_TYPES
+            and state_type != "Choice"
+            and not state.get("End")
+            and not state.get("Next")
+        ):
+            raise Unsupported(f"O estado {where} nao tem Next nem End.")
 
         for target in _targets(state):
             if target not in states:
-                raise Unsupported("O estado %s aponta para %r, que nao existe." % (where, target))
+                raise Unsupported(
+                    f"O estado {where} aponta para {target!r}, que nao existe."
+                )
 
         for rule in state.get("Retry") or []:
             unknown = set(rule) - RETRY_FIELDS
             if unknown:
-                raise Unsupported("Retry de %s usa %s." % (where, ", ".join(sorted(unknown))))
+                raise Unsupported(
+                    "Retry de {} usa {}.".format(where, ", ".join(sorted(unknown)))
+                )
 
         for rule in state.get("Catch") or []:
             unknown = set(rule) - CATCH_FIELDS
             if unknown:
-                raise Unsupported("Catch de %s usa %s." % (where, ", ".join(sorted(unknown))))
+                raise Unsupported(
+                    "Catch de {} usa {}.".format(where, ", ".join(sorted(unknown)))
+                )
 
         for choice in state.get("Choices") or []:
             if "Variable" not in choice or "Next" not in choice:
-                raise Unsupported("Choice de %s precisa de Variable e Next." % where)
+                raise Unsupported(f"Choice de {where} precisa de Variable e Next.")
 
             operators = set(choice) - {"Variable", "Next", "Comment"}
 
             if len(operators) != 1 or not operators <= set(CHOICE_OPERATORS):
                 raise Unsupported(
-                    "Operador de Choice nao suportado em %s: %s." % (where, ", ".join(sorted(operators)))
+                    "Operador de Choice nao suportado em {}: {}.".format(
+                        where, ", ".join(sorted(operators))
+                    )
                 )
 
         for index, branch in enumerate(state.get("Branches") or []):
-            _validate_states(branch["States"], branch["StartAt"], "%s[%d]." % (where, index))
+            _validate_states(branch["States"], branch["StartAt"], f"{where}[{index}].")
 
 
 def _targets(state):
@@ -244,7 +275,7 @@ class Engine:
     # ------------------------------------------------------------------ API
 
     def start(self, input_data, name=None):
-        execution = Execution(name or "exec-%d" % self.clock(), input_data, self.clock())
+        execution = Execution(name or f"exec-{self.clock()}", input_data, self.clock())
 
         context = {
             "Execution": {
@@ -252,20 +283,33 @@ class Engine:
                 "Input": input_data,
                 "StartTime": execution.started_at,
             },
-            "StateMachine": {"Name": self.definition.get("Comment", "state-machine")[:40]},
+            "StateMachine": {
+                "Name": self.definition.get("Comment", "state-machine")[:40]
+            },
             "State": {},
         }
 
         execution.emit("ExecutionStarted", execution.started_at, input=input_data)
 
         try:
-            output = self._run(self.definition["States"], self.definition["StartAt"], input_data, execution, context)
+            output = self._run(
+                self.definition["States"],
+                self.definition["StartAt"],
+                input_data,
+                execution,
+                context,
+            )
         except ExecutionFailed as failure:
             execution.status = "FAILED"
             execution.error = failure.error
             execution.cause = failure.cause
             execution.stopped_at = self.clock()
-            execution.emit("ExecutionFailed", execution.stopped_at, error=failure.error, cause=failure.cause)
+            execution.emit(
+                "ExecutionFailed",
+                execution.stopped_at,
+                error=failure.error,
+                cause=failure.cause,
+            )
             return execution
 
         execution.status = "SUCCEEDED"
@@ -284,21 +328,33 @@ class Engine:
             state = states[name]
             state_type = state["Type"]
 
-            context["State"] = {"Name": name, "RetryCount": 0, "EnteredTime": self.clock()}
+            context["State"] = {
+                "Name": name,
+                "RetryCount": 0,
+                "EnteredTime": self.clock(),
+            }
 
-            execution.emit("%sStateEntered" % state_type, self.clock(), name=name, input=data)
+            execution.emit(
+                f"{state_type}StateEntered", self.clock(), name=name, input=data
+            )
 
             if state_type == "Succeed":
-                execution.emit("SucceedStateExited", self.clock(), name=name, output=data)
+                execution.emit(
+                    "SucceedStateExited", self.clock(), name=name, output=data
+                )
                 return data
 
             if state_type == "Fail":
                 execution.emit("FailStateExited", self.clock(), name=name)
-                raise ExecutionFailed(state.get("Error", "States.Fail"), state.get("Cause", ""))
+                raise ExecutionFailed(
+                    state.get("Error", "States.Fail"), state.get("Cause", "")
+                )
 
             if state_type == "Choice":
                 chosen = self._choose(state, data, name)
-                execution.emit("ChoiceStateExited", self.clock(), name=name, next=chosen)
+                execution.emit(
+                    "ChoiceStateExited", self.clock(), name=name, next=chosen
+                )
                 name = chosen
                 continue
 
@@ -309,7 +365,9 @@ class Engine:
                 name = caught.next_state
                 continue
 
-            execution.emit("%sStateExited" % state_type, self.clock(), name=name, output=data)
+            execution.emit(
+                f"{state_type}StateExited", self.clock(), name=name, output=data
+            )
 
             if state.get("End"):
                 return data
@@ -334,7 +392,7 @@ class Engine:
 
             except TaskFailure as failure:
                 execution.emit(
-                    "TaskFailed" if state_type == "Task" else "%sFailed" % state_type,
+                    "TaskFailed" if state_type == "Task" else f"{state_type}Failed",
                     self.clock(),
                     name=name,
                     error=failure.error,
@@ -342,11 +400,15 @@ class Engine:
                     attempt=attempt,
                 )
 
-                delay = self._retry_delay(state.get("Retry") or [], failure.error, attempt)
+                delay = self._retry_delay(
+                    state.get("Retry") or [], failure.error, attempt
+                )
 
                 if delay is not None:
                     execution.emit(
-                        "TaskRetryScheduled" if state_type == "Task" else "%sRetryScheduled" % state_type,
+                        "TaskRetryScheduled"
+                        if state_type == "Task"
+                        else f"{state_type}RetryScheduled",
                         self.clock(),
                         name=name,
                         attempt=attempt + 1,
@@ -362,7 +424,7 @@ class Engine:
                     raise ExecutionFailed(failure.error, failure.cause) from None
 
                 execution.emit(
-                    "%sStateExited" % state_type,
+                    f"{state_type}StateExited",
                     self.clock(),
                     name=name,
                     error=failure.error,
@@ -391,9 +453,13 @@ class Engine:
         resource = state["Resource"]
 
         if resource not in self.resources:
-            raise Unsupported("Resource sem implementacao local: %s" % resource)
+            raise Unsupported(f"Resource sem implementacao local: {resource}")
 
-        payload = apply_payload(state.get("Parameters", {}), data, context) if "Parameters" in state else data
+        payload = (
+            apply_payload(state.get("Parameters", {}), data, context)
+            if "Parameters" in state
+            else data
+        )
 
         try:
             result = self.resources[resource](payload)
@@ -411,16 +477,26 @@ class Engine:
         return place(data, state.get("ResultPath", ABSENT), result)
 
     def _parallel(self, state, data, execution, context):
-        payload = apply_payload(state["Parameters"], data, context) if "Parameters" in state else data
+        payload = (
+            apply_payload(state["Parameters"], data, context)
+            if "Parameters" in state
+            else data
+        )
 
         results = []
 
-        for index, branch in enumerate(state["Branches"]):
+        for _index, branch in enumerate(state["Branches"]):
             branch_context = dict(context)
 
             try:
                 results.append(
-                    self._run(branch["States"], branch["StartAt"], payload, execution, branch_context)
+                    self._run(
+                        branch["States"],
+                        branch["StartAt"],
+                        payload,
+                        execution,
+                        branch_context,
+                    )
                 )
             except ExecutionFailed as failure:
                 # A falha de um ramo falha o Parallel inteiro, com o erro do
@@ -442,7 +518,9 @@ class Engine:
                 return choice["Next"]
 
         if "Default" not in state:
-            raise ExecutionFailed("States.NoChoiceMatched", "Nenhuma regra do Choice %s casou." % name)
+            raise ExecutionFailed(
+                "States.NoChoiceMatched", f"Nenhuma regra do Choice {name} casou."
+            )
 
         return state["Default"]
 
@@ -466,7 +544,7 @@ class Engine:
 
             interval = rule.get("IntervalSeconds", 1)
             backoff = rule.get("BackoffRate", 2.0)
-            delay = interval * (backoff ** attempt)
+            delay = interval * (backoff**attempt)
 
             if "MaxDelaySeconds" in rule:
                 delay = min(delay, rule["MaxDelaySeconds"])
@@ -569,7 +647,7 @@ def apply_payload(template, data, context):
 
 def _resolve_expression(expression, data, context):
     if not isinstance(expression, str):
-        raise Unsupported("O valor de uma chave .$ deve ser texto: %r" % (expression,))
+        raise Unsupported(f"O valor de uma chave .$ deve ser texto: {expression!r}")
 
     if expression.startswith("States."):
         return _intrinsic(expression, data, context)
@@ -579,9 +657,9 @@ def _resolve_expression(expression, data, context):
 
 def _intrinsic(expression, data, context):
     if not expression.startswith("States.Array(") or not expression.endswith(")"):
-        raise Unsupported("Funcao intrinseca nao suportada: %s" % expression)
+        raise Unsupported(f"Funcao intrinseca nao suportada: {expression}")
 
-    arguments = expression[len("States.Array("):-1]
+    arguments = expression[len("States.Array(") : -1]
 
     return [
         _resolve_expression(argument.strip(), data, context)
@@ -593,7 +671,7 @@ def _intrinsic(expression, data, context):
 def resolve(path, data, context, missing=None):
     """JSONPath simples: $, $.a.b e $$.State.RetryCount."""
     if not isinstance(path, str) or not path.startswith("$"):
-        raise Unsupported("Caminho JSONPath nao suportado: %r" % (path,))
+        raise Unsupported(f"Caminho JSONPath nao suportado: {path!r}")
 
     if path.startswith("$$"):
         current = context
@@ -610,7 +688,9 @@ def resolve(path, data, context, missing=None):
             if missing is not None:
                 return missing
 
-            raise TaskFailure("States.Runtime", "Caminho inexistente na entrada: %s" % path)
+            raise TaskFailure(
+                "States.Runtime", f"Caminho inexistente na entrada: {path}"
+            )
 
         current = current[part]
 
@@ -637,7 +717,7 @@ def place(data, result_path, result):
         return data
 
     if not result_path.startswith("$."):
-        raise Unsupported("ResultPath nao suportado: %r" % (result_path,))
+        raise Unsupported(f"ResultPath nao suportado: {result_path!r}")
 
     merged = json.loads(json.dumps(data)) if isinstance(data, (dict, list)) else data
     current = merged

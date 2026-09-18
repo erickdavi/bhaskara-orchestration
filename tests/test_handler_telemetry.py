@@ -18,12 +18,12 @@ O que se assegura aqui:
 
 import json
 
-import pytest
-
-from idempotency import key
-from local import runtime
 import observability
+import pytest
+from chaos import TransientFailure
 from metrics import FORBIDDEN
+
+from local import runtime
 from src.handlers.delta.handler import lambda_handler as delta
 from src.handlers.dispatcher.handler import lambda_handler as dispatcher
 from src.handlers.persist.handler import lambda_handler as persist
@@ -41,7 +41,11 @@ class Context:
 
 
 def lines(capsys):
-    return [json.loads(l) for l in capsys.readouterr().out.strip().splitlines() if l.strip()]
+    return [
+        json.loads(linha)
+        for linha in capsys.readouterr().out.strip().splitlines()
+        if linha.strip()
+    ]
 
 
 def measured(capsys, service=None):
@@ -59,13 +63,15 @@ def measured(capsys, service=None):
         if "_aws" in linha and (service is None or linha.get("service") == service)
     ]
 
-    assert len(com_metrica) == 1, "esperava uma linha medida, veio %d" % len(com_metrica)
+    assert len(com_metrica) == 1, f"esperava uma linha medida, veio {len(com_metrica)}"
 
     return com_metrica[0]
 
 
 def metric_names(linha):
-    return sorted(m["Name"] for g in linha["_aws"]["CloudWatchMetrics"] for m in g["Metrics"])
+    return sorted(
+        m["Name"] for g in linha["_aws"]["CloudWatchMetrics"] for m in g["Metrics"]
+    )
 
 
 def dimensions(linha):
@@ -174,7 +180,7 @@ def test_o_caos_e_contado_a_parte(capsys):
     evento = task("Delta", validated={"a": 1, "b": -5, "c": 6})
     evento["meta"]["chaos"] = {"state": "Delta", "fails": 1}
 
-    with pytest.raises(Exception):
+    with pytest.raises(TransientFailure):
         delta(evento, Context())
 
     linha = measured(capsys)
@@ -271,7 +277,10 @@ def test_o_submit_conta_o_que_publicou(capsys, aws):
 def test_a_borda_nao_declara_dimensao_de_estado(capsys, aws):
     # submit e status nao rodam dentro da state machine.
     submit(
-        {"headers": {"x-api-key": runtime.LOCAL_API_KEY}, "body": json.dumps({"quantity": 1})},
+        {
+            "headers": {"x-api-key": runtime.LOCAL_API_KEY},
+            "body": json.dumps({"quantity": 1}),
+        },
         Context(),
     )
 
@@ -284,9 +293,13 @@ def test_a_borda_nao_declara_dimensao_de_estado(capsys, aws):
 def test_nenhum_handler_usa_identificador_como_dimensao(capsys, aws):
     """A garantia do fim do mes, verificada nos sete de uma vez."""
     invocacoes = [
-        lambda: validate(task("Validate", equation={"a": 1, "b": -5, "c": 6}), Context()),
+        lambda: validate(
+            task("Validate", equation={"a": 1, "b": -5, "c": 6}), Context()
+        ),
         lambda: delta(task("Delta", validated={"a": 1, "b": -5, "c": 6}), Context()),
-        lambda: root(task("RootX1", validated={"a": 1, "b": -5, "c": 6}, label="x1"), Context()),
+        lambda: root(
+            task("RootX1", validated={"a": 1, "b": -5, "c": 6}, label="x1"), Context()
+        ),
         lambda: persist(
             task(
                 "Persist",
@@ -298,7 +311,10 @@ def test_nenhum_handler_usa_identificador_como_dimensao(capsys, aws):
         ),
         lambda: dispatcher({"Records": []}, Context()),
         lambda: submit(
-            {"headers": {"x-api-key": runtime.LOCAL_API_KEY}, "body": json.dumps({"quantity": 1})},
+            {
+                "headers": {"x-api-key": runtime.LOCAL_API_KEY},
+                "body": json.dumps({"quantity": 1}),
+            },
             Context(),
         ),
     ]
@@ -311,7 +327,9 @@ def test_nenhum_handler_usa_identificador_como_dimensao(capsys, aws):
                 continue
 
             assert not dimensions(linha) & FORBIDDEN, (
-                "o handler %s usou identificador como dimensao" % linha.get("service")
+                "o handler {} usou identificador como dimensao".format(
+                    linha.get("service")
+                )
             )
 
 
@@ -340,7 +358,7 @@ def test_as_metricas_de_plataforma_nao_tem_dimensao(capsys):
     evento = task("Delta", validated={"a": 1, "b": -5, "c": 6})
     evento["meta"]["chaos"] = {"state": "Delta", "fails": 1}
 
-    with pytest.raises(Exception):
+    with pytest.raises(TransientFailure):
         delta(evento, Context())
 
     linha = measured(capsys)

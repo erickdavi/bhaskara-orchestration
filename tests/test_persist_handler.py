@@ -7,8 +7,8 @@ recusa em transformar conflito em falha.
 """
 
 import pytest
-
 from idempotency import canonical, execution_name, key
+
 from local.doubles import ClientError
 from src.handlers.persist.handler import lambda_handler
 
@@ -27,10 +27,14 @@ def event(pk="k1", batch="b1", a=1, b=-5, c=6, delta=1, sign="positive", roots=N
     return {
         "validated": {"a": a, "b": b, "c": c},
         "delta": {"value": delta, "sign": sign},
-        "result": {"roots": roots if roots is not None else [
-            {"label": "x1", "value": 3.0},
-            {"label": "x2", "value": 2.0},
-        ]},
+        "result": {
+            "roots": roots
+            if roots is not None
+            else [
+                {"label": "x1", "value": 3.0},
+                {"label": "x2", "value": 2.0},
+            ]
+        },
         "meta": {"idempotency_key": pk, "batch_id": batch, "message_id": "msg-1"},
         "state": "Persist",
         "retry_count": 0,
@@ -101,7 +105,10 @@ def test_sem_raizes_reais_grava_lista_vazia(table):
 
 def test_numeros_vao_como_texto_para_nao_estourar_o_tipo_n(table):
     """O tipo N do DynamoDB vai ate 1e125; um float64 vai a 1e308."""
-    lambda_handler(event(a=1e-200, b=1e200, c=1.0, roots=[{"label": "x1", "value": 1e250}]), Context())
+    lambda_handler(
+        event(a=1e-200, b=1e200, c=1.0, roots=[{"label": "x1", "value": 1e250}]),
+        Context(),
+    )
 
     item = table.items["k1"]
 

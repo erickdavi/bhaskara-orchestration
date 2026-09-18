@@ -17,7 +17,6 @@ import json
 import sys
 
 from local import runtime
-from local.doubles import SQS
 
 BRANCHES = {
     "positive": "delta > 0   duas raizes",
@@ -58,11 +57,27 @@ def parse_args(argv):
         prog="./run.sh demo",
         description="Executa o fluxo orquestrado localmente, sem AWS.",
     )
-    parser.add_argument("quantity", nargs="?", type=int, default=80, help="quantas equacoes (padrao 80)")
-    parser.add_argument("--invalid", type=float, default=10, help="%% de mensagens invalidas (padrao 10)")
-    parser.add_argument("--duplicates", type=float, default=10, help="%% de mensagens repetidas (padrao 10)")
-    parser.add_argument("--chaos", type=float, default=10, help="%% com falha injetada (padrao 10)")
-    parser.add_argument("--seed", type=int, default=None, help="torna a carga reproduzivel")
+    parser.add_argument(
+        "quantity", nargs="?", type=int, default=80, help="quantas equacoes (padrao 80)"
+    )
+    parser.add_argument(
+        "--invalid",
+        type=float,
+        default=10,
+        help="%% de mensagens invalidas (padrao 10)",
+    )
+    parser.add_argument(
+        "--duplicates",
+        type=float,
+        default=10,
+        help="%% de mensagens repetidas (padrao 10)",
+    )
+    parser.add_argument(
+        "--chaos", type=float, default=10, help="%% com falha injetada (padrao 10)"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="torna a carga reproduzivel"
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -102,7 +117,9 @@ def drain(stack, quiet=True):
     sqs = stack["sqs"]
 
     while sqs.depth(runtime.LOCAL_ORDERS_URL):
-        received = sqs.receive_message(QueueUrl=runtime.LOCAL_ORDERS_URL, MaxNumberOfMessages=10)
+        received = sqs.receive_message(
+            QueueUrl=runtime.LOCAL_ORDERS_URL, MaxNumberOfMessages=10
+        )
 
         event = {"Records": [as_record(message) for message in received["Messages"]]}
 
@@ -142,15 +159,31 @@ def summarize(stack, options, published):
         "succeeded": len(succeeded),
         "failed": len(failed),
         "branches": {
-            sign: sum(1 for e in succeeded if (e.output.get("delta") or {}).get("sign") == sign)
+            sign: sum(
+                1
+                for e in succeeded
+                if (e.output.get("delta") or {}).get("sign") == sign
+            )
             for sign in BRANCHES
         },
-        "stored": sum(1 for e in succeeded if not (e.output.get("persisted") or {}).get("duplicate")),
-        "already_stored": sum(1 for e in succeeded if (e.output.get("persisted") or {}).get("duplicate")),
-        "recovered": sum(1 for e in succeeded if any(v["type"] == "TaskFailed" for v in e.events)),
+        "stored": sum(
+            1
+            for e in succeeded
+            if not (e.output.get("persisted") or {}).get("duplicate")
+        ),
+        "already_stored": sum(
+            1 for e in succeeded if (e.output.get("persisted") or {}).get("duplicate")
+        ),
+        "recovered": sum(
+            1 for e in succeeded if any(v["type"] == "TaskFailed" for v in e.events)
+        ),
         "reasons": reasons(rejected),
         "items": len(stack["dynamodb"].items),
-        "results": [readable(e) for e in succeeded if (e.output.get("result") or {}).get("roots")],
+        "results": [
+            readable(e)
+            for e in succeeded
+            if (e.output.get("result") or {}).get("roots")
+        ],
         "rejections": [rejection(m) for m in rejected],
     }
 
@@ -190,7 +223,7 @@ def report(summary):
         print("Amostra das recusas (chegaram na dead-letter com o motivo anexado)")
 
         for corpo, motivo in summary["rejections"][:3]:
-            print("  %-34s -> %s" % (truncate(corpo, 34), motivo[:60]))
+            print(f"  {truncate(corpo, 34):<34} -> {motivo[:60]}")
 
 
 def rejection(message):
@@ -225,11 +258,11 @@ def readable(execution):
     if len(roots) == 1:
         roots = roots * 2
 
-    return "%-28s -> %s" % (equation_text(validated), roots_text(roots))
+    return f"{equation_text(validated):<28} -> {roots_text(roots)}"
 
 
 def equation_text(validated):
-    return "%sx^2 %s %sx %s %s = 0" % (
+    return "{}x^2 {} {}x {} {} = 0".format(
         number(validated["a"]),
         "+" if validated["b"] >= 0 else "-",
         number(abs(validated["b"])),
@@ -242,7 +275,7 @@ def roots_text(roots):
     if not roots:
         return "sem raizes reais"
 
-    return "x1=%s  x2=%s" % (number(roots[0]), number(roots[1]))
+    return f"x1={number(roots[0])}  x2={number(roots[1])}"
 
 
 def number(value):
@@ -256,20 +289,20 @@ def truncate(text, size):
 
 
 def line(label, value):
-    return "%-46s %6s" % (label, value)
+    return f"{label:<46} {value!s:>6}"
 
 
 def header(options):
     return "\n".join(
         [
             "Fluxo   Validate -> Delta -> Choice(delta) -> Root(s) -> Persist",
-            "Carga   %d equacoes  ·  %g%% invalidas  ·  %g%% duplicadas  ·  %g%% com caos"
-            % (options.quantity, options.invalid, options.duplicates, options.chaos),
+            f"Carga   {options.quantity} equacoes  ·  {options.invalid:g}% invalidas"
+            f"  ·  {options.duplicates:g}% duplicadas  ·  {options.chaos:g}% com caos",
         ]
     )
 
 
-class silenced:
+class silenced:  # noqa: N801 - minusculo de proposito, como os gerenciadores da stdlib
     """Silencia os prints dos handlers, que sao logs estruturados, nao saida.
 
     Na nuvem essas linhas vao para o CloudWatch; aqui elas atrapalhariam a

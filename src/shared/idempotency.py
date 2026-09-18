@@ -54,7 +54,7 @@ def canonical(body):
 
 
 def key(batch_id, body):
-    material = "%s:%s" % (batch_id, canonical(body))
+    material = f"{batch_id}:{canonical(body)}"
 
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:KEY_LENGTH]
 

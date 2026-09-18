@@ -61,7 +61,8 @@ def lambda_handler(event, context):
 
         if missing:
             raise InvalidEquation(
-                "Coeficientes ausentes: %s." % ", ".join(missing), "missing_coefficient"
+                "Coeficientes ausentes: {}.".format(", ".join(missing)),
+                "missing_coefficient",
             )
 
         validated = {name: coefficient(equation[name], name) for name in COEFFICIENTS}
@@ -116,7 +117,7 @@ def coerce(event):
 
     if equation is not None:
         raise InvalidEquation(
-            "A equacao deve ser um objeto JSON, e nao %s." % type(equation).__name__,
+            f"A equacao deve ser um objeto JSON, e nao {type(equation).__name__}.",
             "equation_not_object",
         )
 
@@ -132,11 +133,13 @@ def coerce(event):
         parsed = json.loads(raw, parse_constant=reject_constant)
     except json.JSONDecodeError as error:
         raise InvalidEquation(
-            "Corpo da mensagem nao e JSON valido: %s" % error, "malformed_json"
+            f"Corpo da mensagem nao e JSON valido: {error}", "malformed_json"
         ) from None
 
     if not isinstance(parsed, dict):
-        raise InvalidEquation("Corpo da mensagem deve ser um objeto JSON.", "body_not_object")
+        raise InvalidEquation(
+            "Corpo da mensagem deve ser um objeto JSON.", "body_not_object"
+        )
 
     return parsed
 
@@ -147,17 +150,20 @@ def coefficient(value, name):
     # que o remetente nunca quis enviar.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidEquation(
-            "O coeficiente '%s' deve ser um numero, e nao %s." % (name, type(value).__name__),
+            f"O coeficiente '{name}' deve ser um numero, e nao {type(value).__name__}.",
             "coefficient_not_number",
         )
 
     if not math.isfinite(value):
         raise InvalidEquation(
-            "O coeficiente '%s' deve ser um numero finito." % name, "coefficient_not_finite"
+            f"O coeficiente '{name}' deve ser um numero finito.",
+            "coefficient_not_finite",
         )
 
     return value
 
 
 def reject_constant(name):
-    raise InvalidEquation("Os coeficientes nao aceitam o literal %s." % name, "nan_literal")
+    raise InvalidEquation(
+        f"Os coeficientes nao aceitam o literal {name}.", "nan_literal"
+    )

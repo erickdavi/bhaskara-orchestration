@@ -1,5 +1,4 @@
 import pytest
-
 from calculator import calculate
 
 
@@ -52,7 +51,7 @@ def test_roots_satisfy_the_equation():
     result = calculate(a, b, c)
 
     for root in (result["x1"], result["x2"]):
-        terms = (a * root ** 2, b * root, c)
+        terms = (a * root**2, b * root, c)
         scale = max(abs(term) for term in terms)
 
         assert abs(sum(terms)) / scale < 1e-15
@@ -114,8 +113,8 @@ def test_non_finite_values_are_rejected(a, b, c):
 @pytest.mark.parametrize(
     "a,b,c",
     [
-        (1, 1e200, 1),      # b² estoura para infinito ao calcular o delta
-        (1e-320, 1, 1),     # a divisão por 2a estoura ao calcular a raiz
+        (1, 1e200, 1),  # b² estoura para infinito ao calcular o delta
+        (1e-320, 1, 1),  # a divisão por 2a estoura ao calcular a raiz
     ],
 )
 def test_finite_coefficients_that_overflow_are_rejected(a, b, c):

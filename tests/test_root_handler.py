@@ -9,8 +9,8 @@ precisao quando b^2 >> 4ac.
 import json
 
 import pytest
-
 from chaos import TransientFailure
+
 from src.handlers.root.handler import lambda_handler
 
 
@@ -30,15 +30,24 @@ def event(a, b, c, label, state=None, meta=None, retry_count=0):
 
 
 def test_x1_e_a_raiz_com_mais_delta():
-    assert lambda_handler(event(1, -5, 6, "x1"), Context()) == {"label": "x1", "value": 3.0}
+    assert lambda_handler(event(1, -5, 6, "x1"), Context()) == {
+        "label": "x1",
+        "value": 3.0,
+    }
 
 
 def test_x2_e_a_raiz_com_menos_delta():
-    assert lambda_handler(event(1, -5, 6, "x2"), Context()) == {"label": "x2", "value": 2.0}
+    assert lambda_handler(event(1, -5, 6, "x2"), Context()) == {
+        "label": "x2",
+        "value": 2.0,
+    }
 
 
 def test_raiz_dupla_devolve_o_rotulo_double():
-    assert lambda_handler(event(1, -4, 4, "double"), Context()) == {"label": "double", "value": 2.0}
+    assert lambda_handler(event(1, -4, 4, "double"), Context()) == {
+        "label": "double",
+        "value": 2.0,
+    }
 
 
 def test_as_duas_raizes_satisfazem_a_equacao():
@@ -86,7 +95,12 @@ def test_equacao_sem_raizes_reais_e_erro():
 def test_caos_pode_mirar_um_ramo_especifico_do_parallel():
     meta = {"chaos": {"state": "RootX2", "fails": 2}}
 
-    assert lambda_handler(event(1, -5, 6, "x1", state="RootX1", meta=meta), Context())["value"] == 3.0
+    assert (
+        lambda_handler(event(1, -5, 6, "x1", state="RootX1", meta=meta), Context())[
+            "value"
+        ]
+        == 3.0
+    )
 
     with pytest.raises(TransientFailure):
         lambda_handler(event(1, -5, 6, "x2", state="RootX2", meta=meta), Context())
@@ -96,9 +110,13 @@ def test_caos_respeita_a_tentativa_atual():
     meta = {"chaos": {"state": "RootX1", "fails": 1}}
 
     with pytest.raises(TransientFailure):
-        lambda_handler(event(1, -5, 6, "x1", state="RootX1", meta=meta, retry_count=0), Context())
+        lambda_handler(
+            event(1, -5, 6, "x1", state="RootX1", meta=meta, retry_count=0), Context()
+        )
 
-    assert lambda_handler(event(1, -5, 6, "x1", state="RootX1", meta=meta, retry_count=1), Context())
+    assert lambda_handler(
+        event(1, -5, 6, "x1", state="RootX1", meta=meta, retry_count=1), Context()
+    )
 
 
 def test_log_carrega_o_estado_de_origem(capsys):

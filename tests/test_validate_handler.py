@@ -10,8 +10,8 @@ pior, uma equacao invalida reprocessada para sempre.
 import json
 
 import pytest
-
 from chaos import TransientFailure
+
 from src.handlers.validate.handler import InvalidEquation, lambda_handler
 
 
@@ -30,7 +30,11 @@ def event(equation=None, meta=None, retry_count=0, **extra):
 
 
 def test_equacao_valida_sai_normalizada():
-    assert lambda_handler(event({"a": 1, "b": -5, "c": 6}), Context()) == {"a": 1, "b": -5, "c": 6}
+    assert lambda_handler(event({"a": 1, "b": -5, "c": 6}), Context()) == {
+        "a": 1,
+        "b": -5,
+        "c": 6,
+    }
 
 
 def test_aceita_float_e_negativos():
@@ -158,13 +162,18 @@ def test_caos_falha_enquanto_a_tentativa_for_menor_que_o_pedido():
 
     for tentativa in (0, 1):
         with pytest.raises(TransientFailure):
-            lambda_handler(event({"a": 1, "b": 2, "c": 1}, meta=meta, retry_count=tentativa), Context())
+            lambda_handler(
+                event({"a": 1, "b": 2, "c": 1}, meta=meta, retry_count=tentativa),
+                Context(),
+            )
 
 
 def test_caos_deixa_passar_depois_das_falhas_pedidas():
     meta = {"idempotency_key": "k1", "chaos": {"state": "Validate", "fails": 2}}
 
-    assert lambda_handler(event({"a": 1, "b": 2, "c": 1}, meta=meta, retry_count=2), Context())
+    assert lambda_handler(
+        event({"a": 1, "b": 2, "c": 1}, meta=meta, retry_count=2), Context()
+    )
 
 
 def test_caos_de_outro_estado_nao_afeta_este():

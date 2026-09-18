@@ -91,7 +91,9 @@ class Stack:
                     QueueUrl=runtime.LOCAL_ORDERS_URL, MaxNumberOfMessages=10
                 )
 
-                event = {"Records": [as_record(message) for message in received["Messages"]]}
+                event = {
+                    "Records": [as_record(message) for message in received["Messages"]]
+                }
 
                 with silenced(not self.verbose):
                     dispatcher.lambda_handler(event, runtime.Context())
@@ -114,7 +116,10 @@ class Stack:
             "checked_at": now,
             "cursor": now,
             "queues": {
-                "orders": {"visible": self.sqs.depth(runtime.LOCAL_ORDERS_URL), "in_flight": 0},
+                "orders": {
+                    "visible": self.sqs.depth(runtime.LOCAL_ORDERS_URL),
+                    "in_flight": 0,
+                },
                 "dead_letter": {
                     "visible": self.sqs.depth(runtime.LOCAL_DEAD_LETTER_URL),
                     "in_flight": 0,
@@ -126,7 +131,9 @@ class Stack:
             "results": self.results(batch_id),
             "dead_letter": [
                 status.rejected(message)
-                for message in self.sqs.queue(runtime.LOCAL_DEAD_LETTER_URL).messages[-10:]
+                for message in self.sqs.queue(runtime.LOCAL_DEAD_LETTER_URL).messages[
+                    -10:
+                ]
             ],
         }
 
@@ -134,7 +141,7 @@ class Stack:
         events = []
 
         for name, execution in list(self.stepfunctions.executions.items()):
-            arn = "%s:%s" % (EXECUTION_ARN_PREFIX, name)
+            arn = f"{EXECUTION_ARN_PREFIX}:{name}"
 
             for event in execution.events:
                 if event["timestamp"] < since:
@@ -147,7 +154,11 @@ class Stack:
                         "execution_arn": arn,
                         "timestamp": event["timestamp"],
                         "details": {
-                            key: (json.dumps(value) if key in ("input", "output") else value)
+                            key: (
+                                json.dumps(value)
+                                if key in ("input", "output")
+                                else value
+                            )
                             for key, value in event["details"].items()
                         },
                     }
@@ -175,7 +186,7 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
 
-    def do_GET(self):  # noqa: N802 - assinatura do BaseHTTPRequestHandler
+    def do_GET(self):
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(self.path)
@@ -188,13 +199,16 @@ class Handler(SimpleHTTPRequestHandler):
             # da API — a chave e digitada pelo operador. Aqui ele tambem leva a
             # chave, porque "aqui" e a memoria da propria maquina de quem roda.
             return self.script(
-                "window.BHASKARA_CONFIG = %s;"
-                % json.dumps({"apiBase": "", "apiKey": runtime.LOCAL_API_KEY, "local": True})
+                "window.BHASKARA_CONFIG = {};".format(
+                    json.dumps(
+                        {"apiBase": "", "apiKey": runtime.LOCAL_API_KEY, "local": True}
+                    )
+                )
             )
 
         return super().do_GET()
 
-    def do_POST(self):  # noqa: N802
+    def do_POST(self):
         if self.path != "/orders":
             return self.json(404, {"error": "Rota inexistente."})
 
@@ -231,10 +245,14 @@ class Handler(SimpleHTTPRequestHandler):
 def main(argv=None):
     import argparse
 
-    parser = argparse.ArgumentParser(prog="./run.sh web", description="Painel local do fluxo.")
+    parser = argparse.ArgumentParser(
+        prog="./run.sh web", description="Painel local do fluxo."
+    )
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--verbose", action="store_true", help="mostra os logs das funcoes")
+    parser.add_argument(
+        "--verbose", action="store_true", help="mostra os logs das funcoes"
+    )
 
     options = parser.parse_args(argv)
 
@@ -242,7 +260,7 @@ def main(argv=None):
 
     server = ThreadingHTTPServer((options.host, options.port), Handler)
 
-    print("Painel em http://%s:%d" % (options.host, options.port))
+    print(f"Painel em http://{options.host}:{options.port}")
     print("Nada sai desta maquina: filas, tabela e execucoes vivem em memoria.")
     print("Ctrl+C para parar.")
 

@@ -85,11 +85,16 @@ def lambda_handler(event, context):
 
     log(
         "result_duplicate",
-        measures=[counter("PersistDuplicate")] + end_to_end(latency),
+        measures=[counter("PersistDuplicate"), *end_to_end(latency)],
         end_to_end_ms=latency,
     )
 
-    return {"stored": False, "duplicate": True, "key": pk, "result": readable(existing or item)}
+    return {
+        "stored": False,
+        "duplicate": True,
+        "key": pk,
+        "result": readable(existing or item),
+    }
 
 
 def end_to_end(latency):
@@ -170,7 +175,7 @@ def put_once(item):
             Item=item,
             ConditionExpression="attribute_not_exists(pk)",
         )
-    except Exception as error:  # noqa: BLE001 - ver comentario abaixo
+    except Exception as error:
         # Capturar ClientError por nome exigiria importar botocore aqui so para
         # comparar uma string; o codigo do erro esta no proprio objeto. Qualquer
         # outra falha sobe e vira retry, que e o comportamento correto: nao
@@ -211,7 +216,7 @@ def readable(item):
 def number(text):
     value = float(text)
 
-    return int(value) if value.is_integer() and abs(value) < 2 ** 53 else value
+    return int(value) if value.is_integer() and abs(value) < 2**53 else value
 
 
 def dynamodb():

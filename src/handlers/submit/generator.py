@@ -51,7 +51,9 @@ FATAL_FAILS = 5
 FATAL_SHARE = 0.25
 
 
-def generate(quantity, invalid_ratio=0.0, duplicate_ratio=0.0, chaos_ratio=0.0, seed=None):
+def generate(
+    quantity, invalid_ratio=0.0, duplicate_ratio=0.0, chaos_ratio=0.0, seed=None
+):
     """Produz `quantity` mensagens: (corpo ja serializado, caos ou None).
 
     Devolve o corpo como string, e nao dicionario, porque parte das mensagens

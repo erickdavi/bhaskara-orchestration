@@ -21,10 +21,14 @@ def options(quantity=40, invalid=10, duplicates=10, chaos=10, seed=1):
     return parse_args(
         [
             str(quantity),
-            "--invalid", str(invalid),
-            "--duplicates", str(duplicates),
-            "--chaos", str(chaos),
-            "--seed", str(seed),
+            "--invalid",
+            str(invalid),
+            "--duplicates",
+            str(duplicates),
+            "--chaos",
+            str(chaos),
+            "--seed",
+            str(seed),
         ]
     )
 
@@ -65,7 +69,9 @@ def test_o_caos_produz_recuperacao_e_recusa(stack):
 
 
 def test_duplicatas_sao_evitadas_pela_camada_1(stack):
-    resumo = run(options(quantity=100, duplicates=50, invalid=0, chaos=0, seed=4), stack)
+    resumo = run(
+        options(quantity=100, duplicates=50, invalid=0, chaos=0, seed=4), stack
+    )
 
     assert resumo["deduplicated"] > 0
     assert resumo["started"] < resumo["published"]
@@ -84,18 +90,35 @@ def test_pedir_duplicatas_muda_a_ordem_de_grandeza_da_deduplicacao(aws, monkeypa
     efeitos, a mesma equacao: mesma chave, uma execucao. O que muda ao pedir
     duplicatas nao e o comportamento, e a frequencia.
     """
-    sem = run(options(quantity=120, duplicates=0, invalid=0, chaos=0, seed=6), runtime.build_local_stack(monkeypatch.setattr))
-    com = run(options(quantity=120, duplicates=50, invalid=0, chaos=0, seed=6), runtime.build_local_stack(monkeypatch.setattr))
+    sem = run(
+        options(quantity=120, duplicates=0, invalid=0, chaos=0, seed=6),
+        runtime.build_local_stack(monkeypatch.setattr),
+    )
+    com = run(
+        options(quantity=120, duplicates=50, invalid=0, chaos=0, seed=6),
+        runtime.build_local_stack(monkeypatch.setattr),
+    )
 
     assert com["deduplicated"] > sem["deduplicated"] * 3
     assert sem["started"] + sem["deduplicated"] == 120
 
 
 def test_a_carga_e_reproduzivel(aws, monkeypatch):
-    primeira = run(options(quantity=50, seed=99), runtime.build_local_stack(monkeypatch.setattr))
-    segunda = run(options(quantity=50, seed=99), runtime.build_local_stack(monkeypatch.setattr))
+    primeira = run(
+        options(quantity=50, seed=99), runtime.build_local_stack(monkeypatch.setattr)
+    )
+    segunda = run(
+        options(quantity=50, seed=99), runtime.build_local_stack(monkeypatch.setattr)
+    )
 
-    for campo in ("started", "deduplicated", "succeeded", "failed", "branches", "reasons"):
+    for campo in (
+        "started",
+        "deduplicated",
+        "succeeded",
+        "failed",
+        "branches",
+        "reasons",
+    ):
         assert primeira[campo] == segunda[campo]
 
 

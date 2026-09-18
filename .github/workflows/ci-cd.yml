@@ -1,0 +1,240 @@
+# Pipeline de integracao e entrega — Checkpoint 5.
+#
+# Tres estagios neste ciclo: qualidade, seguranca e plano. O estagio de
+# implantacao entra no ciclo 16, e depende destes tres passarem.
+#
+# Nenhum segredo da AWS existe aqui. A credencial vem de federacao por OIDC: o
+# GitHub emite um token de identidade a cada execucao, a AWS confia nesse
+# emissor e devolve credencial temporaria de uma hora. O unico segredo do
+# repositorio e o ARN da funcao a assumir, que sozinho nao da acesso a nada —
+# quem nao satisfaz a condicao de confianca recebe AccessDenied da propria AWS.
+
+name: CI/CD
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# Uma execucao por referencia. Em branch de trabalho a anterior e cancelada,
+# porque so interessa o resultado do ultimo commit. Em main nao se cancela: a
+# partir do ciclo 16 essa fila carrega o `terraform apply`, e cancelar um apply
+# no meio deixa a infraestrutura em estado desconhecido.
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Teto do workflow inteiro. Cada job que precisa de mais declara o que precisa,
+# e so isso.
+permissions:
+  contents: read
+
+env:
+  # Versoes fixadas pelo mesmo motivo do .terraform.lock.hcl: um pipeline que
+  # instala "a ultima" e um pipeline que muda de comportamento sem ninguem
+  # alterar uma linha.
+  PYTHON_VERSION: "3.10"
+  TERRAFORM_VERSION: "1.14.8"
+  RUFF_VERSION: "0.16.8"
+  CHECKOV_VERSION: "3.3.16"
+  TRIVY_VERSION: "0.70.0"
+  AWS_REGION: "us-east-1"
+
+jobs:
+  # --------------------------------------------------------------- qualidade
+  #
+  # Nao toca na AWS e nao recebe credencial nenhuma. Roda em paralelo com o
+  # estagio de seguranca.
+  qualidade:
+    name: Qualidade
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clonar o repositorio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Instalar Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt "ruff==${RUFF_VERSION}"
+
+      # O lint le a configuracao de ruff.toml, a mesma que roda na maquina.
+      - name: Lint do Python
+        run: ruff check --output-format=github .
+
+      - name: Formatacao do Python
+        run: ruff format --check --diff .
+
+      - name: Instalar Terraform ${{ env.TERRAFORM_VERSION }}
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # -recursive cobre infra/ e infra/bootstrap/. Nao precisa de init nem de
+      # credencial: fmt le arquivo, nao estado.
+      - name: Formatacao do Terraform
+        run: terraform fmt -check -recursive -diff infra/
+
+      # A suite nao fala com a AWS: a fixture autouse do conftest troca os
+      # clientes boto3 por dubles em memoria. Por isso roda aqui, antes de
+      # qualquer credencial existir.
+      - name: Suite de testes
+        run: python -m pytest -q
+
+  # --------------------------------------------------------------- seguranca
+  #
+  # Tambem sem credencial. As duas ferramentas ja eram usadas a mao no projeto;
+  # aqui passam a bloquear a entrega em vez de depender de alguem lembrar.
+  seguranca:
+    name: Seguranca
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clonar o repositorio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Instalar Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Instalar checkov ${{ env.CHECKOV_VERSION }}
+        run: python -m pip install "checkov==${CHECKOV_VERSION}"
+
+      # Sem argumento: o checkov le .checkov.yaml, que aponta para infra/ e
+      # lista as politicas puladas com o motivo de cada uma.
+      - name: Politicas sobre o Terraform
+        run: checkov --compact
+
+      # A mesma linha do README: dependencia vulneravel, segredo comprometido e
+      # configuracao insegura, no repositorio inteiro. As excecoes conscientes
+      # estao em .trivyignore, com a justificativa ao lado.
+      - name: Varredura do repositorio
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: MEDIUM,HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore
+          version: v${{ env.TRIVY_VERSION }}
+
+  # -------------------------------------------------------------------- plano
+  #
+  # Primeiro estagio que fala com a AWS, e o unico que recebe credencial neste
+  # ciclo. Assume a funcao de leitura, que nao tem um verbo de escrita fora do
+  # bucket do state — onde escreve apenas o arquivo de trava.
+  plano:
+    name: Plano
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [qualidade, seguranca]
+
+    permissions:
+      contents: read
+      # Permite ao runner pedir o token de identidade que a AWS troca por
+      # credencial temporaria. Sem isto, nao ha OIDC.
+      id-token: write
+      # So para publicar o resumo do plano no pull request.
+      pull-requests: write
+
+    defaults:
+      run:
+        working-directory: infra
+
+    steps:
+      - name: Clonar o repositorio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Instalar Terraform ${{ env.TERRAFORM_VERSION }}
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Assumir a funcao de leitura
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ci-plan-${{ github.run_id }}
+
+      # O lock do provider e versionado; -lockfile=readonly faz o init falhar se
+      # alguem alterar a versao sem atualizar o arquivo, em vez de resolver
+      # silenciosamente para outra coisa.
+      - name: Inicializar o backend
+        run: terraform init -input=false -lockfile=readonly
+
+      - name: Validar a configuracao
+        run: terraform validate -no-color
+
+      # -detailed-exitcode devolve 0 sem mudanca, 2 com mudanca e 1 em erro. A
+      # distincao importa: um plano com mudanca e o caso normal de um pull
+      # request, e nao pode reprovar o estagio. Sem a flag, os tres casos
+      # chegariam aqui como sucesso e um erro de configuracao passaria batido.
+      - name: Calcular o plano
+        id: plan
+        run: |
+          terraform plan -input=false -no-color -detailed-exitcode \
+            | tee "${RUNNER_TEMP}/plan.txt" && codigo=0 || codigo=$?
+          echo "codigo=${codigo}" >> "${GITHUB_OUTPUT}"
+          case "${codigo}" in
+            0) echo "Nenhuma mudanca a aplicar." ;;
+            2) echo "Ha mudancas a aplicar." ;;
+            *) echo "O plano falhou com codigo ${codigo}."; exit 1 ;;
+          esac
+
+      - name: Publicar o resumo
+        run: |
+          {
+            echo '## Plano do Terraform'
+            echo
+            echo '```terraform'
+            tail -c 60000 "${RUNNER_TEMP}/plan.txt"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # Em pull request o resumo vira comentario, para que a revisao veja o que
+      # a mudanca faria antes de aprova-la.
+      - name: Comentar no pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const bruto = fs.readFileSync(`${process.env.RUNNER_TEMP}/plan.txt`, 'utf8');
+
+            // O limite de um comentario e 65536 caracteres. Um plano grande e
+            // cortado pelo comeco, porque o resumo final e a parte que importa.
+            const limite = 60000;
+            const corte = bruto.length > limite;
+            const plano = corte ? bruto.slice(-limite) : bruto;
+
+            const corpo = [
+              '## Plano do Terraform',
+              '',
+              corte ? '> Plano truncado: exibindo o final.' : '',
+              '',
+              '```terraform',
+              plano,
+              '```',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: corpo,
+            });

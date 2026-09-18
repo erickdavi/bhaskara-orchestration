@@ -185,7 +185,9 @@ def test_proporcao_e_opcional_e_zero_por_padrao(campo, queue):
 def test_cada_mensagem_leva_o_batch_id(queue):
     _, corpo = call(quantity=5)
 
-    identificadores = {m["messageAttributes"]["BatchId"]["StringValue"] for m in queue.messages}
+    identificadores = {
+        m["messageAttributes"]["BatchId"]["StringValue"] for m in queue.messages
+    }
 
     assert identificadores == {corpo["batch_id"]}
 
@@ -267,9 +269,16 @@ def test_para_antes_do_timeout_e_avisa(queue):
 
 def test_falha_parcial_de_lote_nao_descarta_o_resto(monkeypatch, queue):
     def parcial(QueueUrl, Entries):  # noqa: N803
-        return {"Successful": Entries[:8], "Failed": [{"Id": "m9", "Message": "throttled"}] * 2}
+        return {
+            "Successful": Entries[:8],
+            "Failed": [{"Id": "m9", "Message": "throttled"}] * 2,
+        }
 
-    monkeypatch.setattr(submit, "_sqs", type("Fake", (), {"send_message_batch": staticmethod(parcial)})())
+    monkeypatch.setattr(
+        submit,
+        "_sqs",
+        type("Fake", (), {"send_message_batch": staticmethod(parcial)})(),
+    )
 
     _, corpo = call(quantity=10)
 
@@ -280,6 +289,9 @@ def test_falha_parcial_de_lote_nao_descarta_o_resto(monkeypatch, queue):
 def test_log_de_publicacao_sai_como_json(capsys):
     call(quantity=3)
 
-    eventos = [json.loads(linha)["event"] for linha in capsys.readouterr().out.strip().splitlines()]
+    eventos = [
+        json.loads(linha)["event"]
+        for linha in capsys.readouterr().out.strip().splitlines()
+    ]
 
     assert eventos == ["batch_requested", "batch_published"]

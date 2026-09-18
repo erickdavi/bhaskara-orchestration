@@ -154,7 +154,9 @@ def instrument(line, measures):
 
     measured = list(measures)
     measured.append(
-        metrics.duration("HandlerDuration", line["duration_ms"], Service=service, State=state)
+        metrics.duration(
+            "HandlerDuration", line["duration_ms"], Service=service, State=state
+        )
     )
 
     # ColdStart e RetryAttempt saem sem dimensao, de proposito. Com `Service`

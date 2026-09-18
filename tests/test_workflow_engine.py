@@ -12,7 +12,6 @@ import pytest
 from local.engine import (
     ABSENT,
     Engine,
-    ExecutionFailed,
     TaskFailure,
     Unsupported,
     apply_payload,
@@ -127,7 +126,14 @@ def test_task_chama_o_recurso_e_grava_no_result_path():
 
 
 def test_pass_com_result_estatico():
-    states = {"A": {"Type": "Pass", "Result": {"roots": []}, "ResultPath": "$.result", "End": True}}
+    states = {
+        "A": {
+            "Type": "Pass",
+            "Result": {"roots": []},
+            "ResultPath": "$.result",
+            "End": True,
+        }
+    }
 
     assert engine(states).start({"x": 1}).output == {"x": 1, "result": {"roots": []}}
 
@@ -137,17 +143,40 @@ def test_choice_roteia_pelo_sinal():
         "A": {
             "Type": "Choice",
             "Choices": [
-                {"Variable": "$.delta.sign", "StringEquals": "positive", "Next": "Duas"},
+                {
+                    "Variable": "$.delta.sign",
+                    "StringEquals": "positive",
+                    "Next": "Duas",
+                },
                 {"Variable": "$.delta.sign", "StringEquals": "zero", "Next": "Dupla"},
             ],
             "Default": "Nenhuma",
         },
-        "Duas": {"Type": "Pass", "Result": "duas", "ResultPath": "$.saida", "End": True},
-        "Dupla": {"Type": "Pass", "Result": "dupla", "ResultPath": "$.saida", "End": True},
-        "Nenhuma": {"Type": "Pass", "Result": "nenhuma", "ResultPath": "$.saida", "End": True},
+        "Duas": {
+            "Type": "Pass",
+            "Result": "duas",
+            "ResultPath": "$.saida",
+            "End": True,
+        },
+        "Dupla": {
+            "Type": "Pass",
+            "Result": "dupla",
+            "ResultPath": "$.saida",
+            "End": True,
+        },
+        "Nenhuma": {
+            "Type": "Pass",
+            "Result": "nenhuma",
+            "ResultPath": "$.saida",
+            "End": True,
+        },
     }
 
-    for sign, esperado in (("positive", "duas"), ("zero", "dupla"), ("negative", "nenhuma")):
+    for sign, esperado in (
+        ("positive", "duas"),
+        ("zero", "dupla"),
+        ("negative", "nenhuma"),
+    ):
         execution = engine(states).start({"delta": {"sign": sign}})
 
         assert execution.output["saida"] == esperado
@@ -161,13 +190,23 @@ def test_parallel_roda_os_dois_ramos_e_junta_os_resultados():
                 {
                     "StartAt": "X1",
                     "States": {
-                        "X1": {"Type": "Task", "Resource": "${f}", "Parameters": {"label": "x1"}, "End": True}
+                        "X1": {
+                            "Type": "Task",
+                            "Resource": "${f}",
+                            "Parameters": {"label": "x1"},
+                            "End": True,
+                        }
                     },
                 },
                 {
                     "StartAt": "X2",
                     "States": {
-                        "X2": {"Type": "Task", "Resource": "${f}", "Parameters": {"label": "x2"}, "End": True}
+                        "X2": {
+                            "Type": "Task",
+                            "Resource": "${f}",
+                            "Parameters": {"label": "x2"},
+                            "End": True,
+                        }
                     },
                 },
             ],
@@ -195,7 +234,11 @@ def test_fail_encerra_com_erro_nomeado():
 
     execution = engine(states).start({})
 
-    assert (execution.status, execution.error, execution.cause) == ("FAILED", "Recusada", "porque sim")
+    assert (execution.status, execution.error, execution.cause) == (
+        "FAILED",
+        "Recusada",
+        "porque sim",
+    )
 
 
 # --------------------------------------------------------------------- retry
@@ -213,7 +256,7 @@ class Instavel:
         self.chamadas += 1
 
         if self.chamadas <= self.falhas:
-            raise self.erro("falha %d" % self.chamadas)
+            raise self.erro(f"falha {self.chamadas}")
 
         return {"ok": True, "chamadas": self.chamadas}
 
@@ -305,10 +348,21 @@ def test_catch_desvia_o_fluxo_e_anexa_o_erro():
         "A": {
             "Type": "Task",
             "Resource": "${f}",
-            "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Recusa"}],
+            "Catch": [
+                {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.error",
+                    "Next": "Recusa",
+                }
+            ],
             "End": True,
         },
-        "Recusa": {"Type": "Pass", "ResultPath": "$.destino", "Result": "dlq", "End": True},
+        "Recusa": {
+            "Type": "Pass",
+            "ResultPath": "$.destino",
+            "Result": "dlq",
+            "End": True,
+        },
     }
 
     def falha(payload):
@@ -330,7 +384,13 @@ def test_catch_so_age_depois_de_esgotar_o_retry():
             "Type": "Task",
             "Resource": "${f}",
             "Retry": RETRY,
-            "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Recusa"}],
+            "Catch": [
+                {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.error",
+                    "Next": "Recusa",
+                }
+            ],
             "End": True,
         },
         "Recusa": {"Type": "Succeed"},
@@ -395,12 +455,26 @@ def test_falha_de_ramo_e_capturada_pelo_catch_do_parallel():
         "A": {
             "Type": "Parallel",
             "Branches": [
-                {"StartAt": "X", "States": {"X": {"Type": "Task", "Resource": "${f}", "End": True}}},
+                {
+                    "StartAt": "X",
+                    "States": {"X": {"Type": "Task", "Resource": "${f}", "End": True}},
+                },
             ],
-            "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Recusa"}],
+            "Catch": [
+                {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.error",
+                    "Next": "Recusa",
+                }
+            ],
             "End": True,
         },
-        "Recusa": {"Type": "Pass", "Result": "dlq", "ResultPath": "$.destino", "End": True},
+        "Recusa": {
+            "Type": "Pass",
+            "Result": "dlq",
+            "ResultPath": "$.destino",
+            "End": True,
+        },
     }
 
     def falha(payload):

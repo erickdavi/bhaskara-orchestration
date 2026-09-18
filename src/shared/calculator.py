@@ -5,8 +5,7 @@ import math
 # resultado não existe em ponto flutuante — melhor recusar explicitamente do que
 # devolver Infinity, que sequer é JSON válido.
 OVERFLOW_ERROR = (
-    "Os coeficientes informados produzem um resultado fora do intervalo "
-    "representável."
+    "Os coeficientes informados produzem um resultado fora do intervalo representável."
 )
 
 
@@ -21,7 +20,7 @@ def calculate(a, b, c):
     # multiplicação. Os dois caminhos convergem para o mesmo ValueError para que
     # calculate() tenha um contrato único de erro.
     try:
-        delta = b ** 2 - 4 * a * c
+        delta = b**2 - 4 * a * c
     except OverflowError:
         raise ValueError(OVERFLOW_ERROR) from None
 
@@ -29,13 +28,7 @@ def calculate(a, b, c):
         raise ValueError(OVERFLOW_ERROR)
 
     if delta < 0:
-        return {
-            "a": a,
-            "b": b,
-            "c": c,
-            "delta": delta,
-            "roots": []
-        }
+        return {"a": a, "b": b, "c": c, "delta": delta, "roots": []}
 
     if delta == 0:
         root = -b / (2 * a)
@@ -43,28 +36,14 @@ def calculate(a, b, c):
         if not math.isfinite(root):
             raise ValueError(OVERFLOW_ERROR)
 
-        return {
-            "a": a,
-            "b": b,
-            "c": c,
-            "delta": delta,
-            "x1": root,
-            "x2": root
-        }
+        return {"a": a, "b": b, "c": c, "delta": delta, "x1": root, "x2": root}
 
     x1, x2 = _roots(a, b, c, delta)
 
     if not all(math.isfinite(root) for root in (x1, x2)):
         raise ValueError(OVERFLOW_ERROR)
 
-    return {
-        "a": a,
-        "b": b,
-        "c": c,
-        "delta": delta,
-        "x1": x1,
-        "x2": x2
-    }
+    return {"a": a, "b": b, "c": c, "delta": delta, "x1": x1, "x2": x2}
 
 
 def _roots(a, b, c, delta):

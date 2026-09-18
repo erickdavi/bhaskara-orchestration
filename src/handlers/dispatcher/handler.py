@@ -122,7 +122,11 @@ def dispatch(record, log):
         try:
             payload["meta"]["chaos"] = json.loads(chaos)
         except ValueError:
-            log("chaos_attribute_ignored", level=WARN, message_id=record.get("messageId"))
+            log(
+                "chaos_attribute_ignored",
+                level=WARN,
+                message_id=record.get("messageId"),
+            )
 
     try:
         stepfunctions().start_execution(
@@ -130,7 +134,7 @@ def dispatch(record, log):
             name=name,
             input=json.dumps(payload, ensure_ascii=False, allow_nan=False),
         )
-    except Exception as error:  # noqa: BLE001 - distingue recusa de falha
+    except Exception as error:
         if error_code(error) != ALREADY_EXISTS:
             raise
 

@@ -15,9 +15,8 @@ na fatura do fim do mes.
 
 import json
 
-import pytest
-
 import metrics
+import pytest
 from metrics import (
     COUNT,
     MILLISECONDS,
@@ -73,11 +72,13 @@ def test_o_valor_da_dimensao_vira_propriedade_na_raiz():
 
 
 def test_toda_dimensao_declarada_existe_como_propriedade():
-    emf = block([duration("HandlerDuration", 12.5, Service="delta", State="Delta")], TIMESTAMP)
+    emf = block(
+        [duration("HandlerDuration", 12.5, Service="delta", State="Delta")], TIMESTAMP
+    )
 
     for group in definitions(emf):
         for dimensao in group["Dimensions"][0]:
-            assert dimensao in emf, "dimensao %s declarada e ausente da raiz" % dimensao
+            assert dimensao in emf, f"dimensao {dimensao} declarada e ausente da raiz"
 
 
 def test_sem_metrica_nao_ha_bloco():
@@ -96,7 +97,9 @@ def test_a_unidade_acompanha_o_tipo_da_medida():
 
 
 def test_o_bloco_e_serializavel():
-    emf = block([duration("HandlerDuration", 12.5, Service="root", State="RootX1")], TIMESTAMP)
+    emf = block(
+        [duration("HandlerDuration", 12.5, Service="root", State="RootX1")], TIMESTAMP
+    )
 
     assert json.loads(json.dumps(emf))["HandlerDuration"] == 12.5
 
@@ -118,7 +121,10 @@ def test_dimensoes_diferentes_viram_grupos_diferentes():
     # A duracao tem dimensao de servico e a distribuicao tem dimensao de sinal,
     # na mesma linha. Sao dois grupos, e isso e valido em EMF.
     emf = block(
-        [duration("HandlerDuration", 3.0, Service="delta"), counter("Sinal", 1, Sign="zero")],
+        [
+            duration("HandlerDuration", 3.0, Service="delta"),
+            counter("Sinal", 1, Sign="zero"),
+        ],
         TIMESTAMP,
     )
 
@@ -135,7 +141,9 @@ def test_metrica_sem_dimensao_e_o_total_agregado():
 def test_dimensao_sem_valor_nao_e_declarada():
     # O submit e o status nao rodam dentro da state machine: nao ha State. Uma
     # dimensao State=None criaria a serie "sem estado" em vez de nenhuma serie.
-    emf = block([duration("HandlerDuration", 4.0, Service="submit", State=None)], TIMESTAMP)
+    emf = block(
+        [duration("HandlerDuration", 4.0, Service="submit", State=None)], TIMESTAMP
+    )
 
     assert definitions(emf)[0]["Dimensions"] == [["Service"]]
     assert "State" not in emf
@@ -154,7 +162,14 @@ def test_o_valor_da_dimensao_vira_texto():
 
 @pytest.mark.parametrize(
     "campo",
-    ["execution", "batch_id", "message_id", "request_id", "execution_name", "idempotency_key"],
+    [
+        "execution",
+        "batch_id",
+        "message_id",
+        "request_id",
+        "execution_name",
+        "idempotency_key",
+    ],
 )
 def test_identificador_nao_pode_ser_dimensao(campo):
     with pytest.raises(HighCardinalityDimension) as erro:
@@ -183,7 +198,9 @@ def test_o_conjunto_proibido_cobre_as_duas_grafias():
 
 
 def test_dimensao_legitima_passa():
-    assert counter("EquationsByDeltaSign", 1, Sign="positive")["dimensions"] == {"Sign": "positive"}
+    assert counter("EquationsByDeltaSign", 1, Sign="positive")["dimensions"] == {
+        "Sign": "positive"
+    }
 
 
 # ------------------------------------------------------------------ conflito
@@ -193,7 +210,10 @@ def test_a_mesma_dimensao_com_dois_valores_e_recusada():
     # Em EMF o valor da dimensao vive na raiz da linha, e uma raiz tem um valor
     # por chave. Duas medidas com State diferente precisam de duas linhas.
     with pytest.raises(ConflictingDimension) as erro:
-        block([counter("A", 1, State="RootX1"), counter("B", 1, State="RootX2")], TIMESTAMP)
+        block(
+            [counter("A", 1, State="RootX1"), counter("B", 1, State="RootX2")],
+            TIMESTAMP,
+        )
 
     assert "State" in str(erro.value)
 

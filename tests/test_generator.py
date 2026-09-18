@@ -22,7 +22,9 @@ def outcome_of(body):
     equation = json.loads(body)
     delta = equation["b"] ** 2 - 4 * equation["a"] * equation["c"]
 
-    return "two_roots" if delta > 0 else ("double_root" if delta == 0 else "no_real_roots")
+    return (
+        "two_roots" if delta > 0 else ("double_root" if delta == 0 else "no_real_roots")
+    )
 
 
 def test_gera_a_quantidade_pedida():
@@ -54,7 +56,7 @@ def test_raizes_de_delta_positivo_sao_inteiras():
         if delta <= 0:
             continue
 
-        raiz = (-equation["b"] + delta ** 0.5) / (2 * equation["a"])
+        raiz = (-equation["b"] + delta**0.5) / (2 * equation["a"])
 
         assert raiz == pytest.approx(round(raiz))
 
@@ -71,7 +73,9 @@ def test_seeds_diferentes_geram_cargas_diferentes():
 
 
 def test_proporcao_de_invalidas_e_respeitada():
-    invalidas = sum(1 for body in bodies(400, invalid_ratio=0.25, seed=4) if not valida(body))
+    invalidas = sum(
+        1 for body in bodies(400, invalid_ratio=0.25, seed=4) if not valida(body)
+    )
 
     assert 70 < invalidas < 130
 
@@ -107,7 +111,10 @@ def valida(body):
 
     return (
         set(payload) == {"a", "b", "c"}
-        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in payload.values())
+        and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool)
+            for v in payload.values()
+        )
         and payload["a"] != 0
     )
 
@@ -135,7 +142,10 @@ def test_a_duplicata_repete_a_mensagem_inteira_e_nao_so_o_corpo():
     —, mas a repeticao intencional precisa ser uma copia fiel, senao o painel
     mostraria "duplicada" para algo que na verdade e outra mensagem.
     """
-    pares = [(body, json.dumps(chaos, sort_keys=True)) for body, chaos in generate(200, chaos_ratio=0.5, duplicate_ratio=0.5, seed=8)]
+    pares = [
+        (body, json.dumps(chaos, sort_keys=True))
+        for body, chaos in generate(200, chaos_ratio=0.5, duplicate_ratio=0.5, seed=8)
+    ]
 
     assert len(set(pares)) < len(pares) * 0.8
 
@@ -167,7 +177,9 @@ def test_o_caos_mira_estados_que_a_equacao_realmente_visita():
 
 def test_o_caos_traz_os_dois_desfechos():
     """Ate 3 falhas o retry se recupera; 5 esgota e vai para a dead-letter."""
-    fails = {chaos["fails"] for _, chaos in generate(400, chaos_ratio=1.0, seed=11) if chaos}
+    fails = {
+        chaos["fails"] for _, chaos in generate(400, chaos_ratio=1.0, seed=11) if chaos
+    }
 
     assert fails <= {1, 2, 3, 5}
     assert 5 in fails

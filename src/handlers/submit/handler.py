@@ -79,7 +79,9 @@ def lambda_handler(event, context):
 
     log("batch_requested", batch_id=batch_id, **options)
 
-    published, failed, batches, truncated, chaos = publish(batch_id, options, context, log)
+    published, failed, batches, truncated, chaos = publish(
+        batch_id, options, context, log
+    )
 
     body = {
         "batch_id": batch_id,
@@ -150,7 +152,7 @@ def quantity_of(payload):
         raise InvalidRequest("O campo 'quantity' deve ser no minimo 1.")
 
     if quantity > MAX_QUANTITY:
-        raise InvalidRequest("O campo 'quantity' deve ser no maximo %d." % MAX_QUANTITY)
+        raise InvalidRequest(f"O campo 'quantity' deve ser no maximo {MAX_QUANTITY}.")
 
     return quantity
 
@@ -165,10 +167,10 @@ def ratio_of(payload, name):
     ratio = payload.get(name, 0)
 
     if isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
-        raise InvalidRequest("O campo '%s' deve ser um numero." % name)
+        raise InvalidRequest(f"O campo '{name}' deve ser um numero.")
 
     if not 0 <= ratio <= 1:
-        raise InvalidRequest("O campo '%s' deve estar entre 0 e 1." % name)
+        raise InvalidRequest(f"O campo '{name}' deve estar entre 0 e 1.")
 
     return float(ratio)
 
@@ -209,7 +211,11 @@ def publish(batch_id, options, context, log):
                 }
 
             entries.append(
-                {"Id": "m%d" % index, "MessageBody": body, "MessageAttributes": attributes}
+                {
+                    "Id": f"m{index}",
+                    "MessageBody": body,
+                    "MessageAttributes": attributes,
+                }
             )
 
         result = sqs().send_message_batch(QueueUrl=ORDERS_QUEUE_URL, Entries=entries)

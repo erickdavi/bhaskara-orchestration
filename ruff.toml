@@ -1,0 +1,64 @@
+# Configuracao do ruff, a ferramenta de lint e formatacao do estagio de
+# qualidade do Checkpoint 5.
+#
+# Ate o ciclo 14 o projeto nao tinha linter: o estilo era mantido a mao, o que
+# funciona enquanto uma pessoa so escreve e falha em silencio no dia em que o
+# pipeline precisa reprovar uma entrega por conta propria. Um estagio de
+# qualidade que nao tem criterio nao reprova nada.
+
+target-version = "py310"
+
+# 88 colunas, o padrao do formatador. O codigo anterior foi escrito perto de 79
+# e cabe de sobra; escolher o padrao evita discutir um numero que a ferramenta
+# ja escolheu bem.
+line-length = 88
+
+exclude = [
+  ".venv",
+  "__pycache__",
+
+  # O ruff 0.16 formata bloco de codigo dentro de Markdown. Os documentos de
+  # ciclo em docs/ sao registro historico: eles citam o codigo como ele era no
+  # dia, e deixar o formatador reescrever essas citacoes seria corrigir a ata
+  # da reuniao. O README cita codigo pelo mesmo motivo.
+  "*.md",
+]
+
+[lint]
+# O conjunto padrao (E4, E7, E9, F) pega erro de verdade: nome indefinido,
+# import quebrado, comparacao suspeita. As quatro familias adicionais existem
+# por motivo declarado:
+#
+#   UP   sintaxe que envelheceu — o projeto e py310 e ainda tinha %-formatting
+#   B    armadilhas do Python que passam no teste e falham em producao
+#   SIM  condicional que da para ler em menos passos
+#   I    ordem dos imports, que e a briga de merge mais burra que existe
+#   RUF  achados do proprio ruff, incluindo noqa que nao suprime mais nada
+#
+# E501 (linha longa) fica de fora de proposito. O formatador ja quebra codigo;
+# o que sobra sao comentarios em prosa, e reescrever paragrafo para caber em
+# 88 colunas e trabalho sem leitor.
+#   N    convencao de nome — e o que torna verdadeiros os noqa que ja existiam
+#   A    nome que sombreia embutido do Python
+#   BLE  except Exception sem discriminar, que esconde o erro que importa
+#
+# As tres ultimas familias entraram por um motivo especifico: o codigo ja tinha
+# 24 comentarios `noqa: N803`, `noqa: A002` e `noqa: BLE001`, escritos a mao em
+# checkpoints anteriores para registrar decisoes deliberadas — a assinatura do
+# boto3 em CamelCase, o `format` do BaseHTTPRequestHandler, o except largo que
+# vira erro nomeado. Sem selecionar as familias, o proprio ruff marcava esses
+# comentarios como inuteis (RUF100) e a correcao automatica os apagaria, isto e:
+# a ferramenta apagaria a justificativa em vez de verificar a regra.
+select = ["E4", "E7", "E9", "F", "UP", "B", "SIM", "I", "RUF", "N", "A", "BLE"]
+
+# N818 exige que toda excecao termine em "Error". As excecoes do simulador
+# levam de proposito o nome do erro equivalente na AWS — `ExecutionAlreadyExists`
+# e literalmente o que o Step Functions devolve, e `TaskFailure` e o nome do
+# evento no historico. Renomea-las para `ExecutionAlreadyExistsError` quebraria
+# a correspondencia com o servico que o simulador imita, que e a unica razao de
+# esses nomes existirem.
+ignore = ["N818"]
+
+[format]
+# Aspas duplas e o que o codigo ja usa na maior parte dos arquivos.
+quote-style = "double"

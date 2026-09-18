@@ -22,7 +22,10 @@ def engine(aws):
 
 def run(engine, a, b, c, meta=None):
     return engine.start(
-        {"equation": {"a": a, "b": b, "c": c}, "meta": meta or {"idempotency_key": "k1"}}
+        {
+            "equation": {"a": a, "b": b, "c": c},
+            "meta": meta or {"idempotency_key": "k1"},
+        }
     )
 
 
@@ -160,7 +163,7 @@ def test_execucao_bem_sucedida_nao_publica_na_dead_letter(engine, aws):
 
 def test_o_resultado_e_gravado_nos_tres_caminhos(engine, aws):
     for indice, (a, b, c) in enumerate(((1, -5, 6), (1, -4, 4), (1, 0, 5))):
-        run(engine, a, b, c, meta={"idempotency_key": "k%d" % indice, "batch_id": "b1"})
+        run(engine, a, b, c, meta={"idempotency_key": f"k{indice}", "batch_id": "b1"})
 
     assert sorted(aws["dynamodb"].items) == ["k0", "k1", "k2"]
 

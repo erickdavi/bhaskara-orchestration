@@ -96,9 +96,9 @@ def measurement(name, value, unit, dimensions):
     for key in dimensions:
         if key in FORBIDDEN:
             raise HighCardinalityDimension(
-                "'%s' identifica uma equacao e nao pode ser dimensao de '%s': "
+                f"'{key}' identifica uma equacao e nao pode ser dimensao de '{name}': "
                 "seria uma metrica nova por equacao processada. Passe o valor "
-                "como campo da linha." % (key, name)
+                "como campo da linha."
             )
 
     return {
@@ -107,7 +107,9 @@ def measurement(name, value, unit, dimensions):
         "unit": unit,
         # Dimensao sem valor nao existe: o `status` nao tem `State`, e declarar
         # State=None criaria a serie "sem estado" em vez de nenhuma serie.
-        "dimensions": {key: str(value) for key, value in dimensions.items() if value is not None},
+        "dimensions": {
+            key: str(value) for key, value in dimensions.items() if value is not None
+        },
     }
 
 
@@ -132,9 +134,8 @@ def block(measurements, timestamp):
         for key, value in item["dimensions"].items():
             if dimension_values.setdefault(key, value) != value:
                 raise ConflictingDimension(
-                    "A dimensao '%s' aparece com '%s' e '%s' na mesma linha; em "
+                    f"A dimensao '{key}' aparece com '{dimension_values[key]}' e '{value}' na mesma linha; em "
                     "EMF o valor vive na raiz e so pode ser um."
-                    % (key, dimension_values[key], value)
                 )
 
         groups.setdefault(keys, []).append({"Name": item["name"], "Unit": item["unit"]})

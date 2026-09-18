@@ -34,7 +34,9 @@ def test_todo_placeholder_tem_implementacao_local(definition):
 
     faltando = runtime.placeholders(definition) - set(resources)
 
-    assert faltando == set(), "sem binding local para: %s" % ", ".join(sorted(faltando))
+    assert faltando == set(), "sem binding local para: {}".format(
+        ", ".join(sorted(faltando))
+    )
 
 
 def test_todo_estado_tem_tipo_conhecido(definition):
@@ -45,7 +47,7 @@ def test_todo_estado_tem_tipo_conhecido(definition):
 def test_toda_task_tem_retry(definition):
     for name, state in states_of(definition):
         if state["Type"] == "Task" and state.get("Resource", "").startswith("${"):
-            assert state.get("Retry"), "%s sem Retry" % name
+            assert state.get("Retry"), f"{name} sem Retry"
 
 
 def test_erro_permanente_e_avaliado_antes_do_generico(definition):
@@ -85,12 +87,16 @@ def test_backoff_e_exponencial(definition):
 
 def test_definicao_invalida_e_recusada():
     with pytest.raises(Unsupported):
-        validate_definition({"StartAt": "A", "States": {"A": {"Type": "Map", "End": True}}})
+        validate_definition(
+            {"StartAt": "A", "States": {"A": {"Type": "Map", "End": True}}}
+        )
 
 
 def test_estado_que_aponta_para_lugar_nenhum_e_recusado():
     with pytest.raises(Unsupported):
-        validate_definition({"StartAt": "A", "States": {"A": {"Type": "Pass", "Next": "B"}}})
+        validate_definition(
+            {"StartAt": "A", "States": {"A": {"Type": "Pass", "Next": "B"}}}
+        )
 
 
 def states_of(definition, states=None):
@@ -101,8 +107,7 @@ def states_of(definition, states=None):
         yield name, state
 
         for branch in state.get("Branches") or []:
-            for item in states_of(definition, branch["States"]):
-                yield item
+            yield from states_of(definition, branch["States"])
 
 
 def test_toda_task_recebe_nome_do_estado_e_tentativa(definition):
@@ -145,11 +150,11 @@ def test_toda_task_tem_catch_ou_esta_dentro_de_um_parallel_que_tem(definition):
 
     for name, state in topo.items():
         if state["Type"] in ("Task", "Parallel") and name != "DeadLetter":
-            assert state.get("Catch"), "%s sem Catch" % name
+            assert state.get("Catch"), f"{name} sem Catch"
 
     for name, state in topo.items():
-        for branch in state.get("Branches") or []:
-            assert state.get("Catch"), "ramo de %s sem Catch no Parallel" % name
+        for _branch in state.get("Branches") or []:
+            assert state.get("Catch"), f"ramo de {name} sem Catch no Parallel"
 
 
 def test_todo_catch_leva_a_dead_letter(definition):
@@ -165,7 +170,12 @@ def test_a_dead_letter_publica_direto_na_sqs(definition):
 
     assert dead_letter["Resource"] == "arn:aws:states:::sqs:sendMessage"
     assert dead_letter["Parameters"]["MessageBody"]["source"] == "workflow"
-    assert dead_letter["Parameters"]["MessageAttributes"]["RejectionReason"]["StringValue.$"] == "$.error.Error"
+    assert (
+        dead_letter["Parameters"]["MessageAttributes"]["RejectionReason"][
+            "StringValue.$"
+        ]
+        == "$.error.Error"
+    )
 
 
 def test_a_recusa_termina_a_execucao_como_falha(definition):
@@ -176,7 +186,9 @@ def test_a_recusa_termina_a_execucao_como_falha(definition):
 
 def test_todo_placeholder_do_arquivo_e_conhecido():
     """Placeholder com nome errado viraria texto vazio no apply."""
-    conhecidos = {name.strip("${}") for name in runtime.HANDLERS} | set(runtime.LOCAL_SUBSTITUTIONS)
+    conhecidos = {name.strip("${}") for name in runtime.HANDLERS} | set(
+        runtime.LOCAL_SUBSTITUTIONS
+    )
 
     assert runtime.raw_placeholders() <= conhecidos
 
@@ -200,7 +212,9 @@ def diagram_nodes():
     import os
     import re
 
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "flow.js")
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "flow.js"
+    )
 
     with open(path, encoding="utf-8") as handle:
         source = handle.read()
@@ -216,7 +230,7 @@ def test_todo_estado_da_asl_tem_no_no_painel_ou_justificativa(definition):
 
     for name, _ in states_of(definition):
         assert name in nos or name in SEM_NO_NO_DIAGRAMA, (
-            "o estado %s nao aparece no painel e nao esta na lista de excecoes" % name
+            f"o estado {name} nao aparece no painel e nao esta na lista de excecoes"
         )
 
 
@@ -238,7 +252,9 @@ def test_throttling_tem_retrier_mais_paciente_que_o_generico(definition):
     for name, state in states_of(definition):
         retriers = state.get("Retry") or []
 
-        throttling = [r for r in retriers if "Lambda.TooManyRequestsException" in r["ErrorEquals"]]
+        throttling = [
+            r for r in retriers if "Lambda.TooManyRequestsException" in r["ErrorEquals"]
+        ]
 
         if not throttling:
             continue

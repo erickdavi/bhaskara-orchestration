@@ -25,7 +25,7 @@ class ClientError(Exception):
     """
 
     def __init__(self, code, message=""):
-        super().__init__("%s: %s" % (code, message))
+        super().__init__(f"{code}: {message}")
         self.response = {"Error": {"Code": code, "Message": message}}
 
 
@@ -75,9 +75,14 @@ class DynamoDB:
             if wanted is None or item["batch_id"]["S"] == wanted
         ]
 
-        found.sort(key=lambda item: int(item["created_at"]["N"]), reverse=not ScanIndexForward)
+        found.sort(
+            key=lambda item: int(item["created_at"]["N"]), reverse=not ScanIndexForward
+        )
 
-        return {"Items": [json.loads(json.dumps(item)) for item in found[:Limit]], "Count": len(found)}
+        return {
+            "Items": [json.loads(json.dumps(item)) for item in found[:Limit]],
+            "Count": len(found),
+        }
 
 
 class Queue:
@@ -106,7 +111,7 @@ class SQS:
 
     def send_message(self, QueueUrl, MessageBody, MessageAttributes=None):  # noqa: N803
         with self._lock:
-            message_id = "msg-%d" % self._next_id
+            message_id = f"msg-{self._next_id}"
             self._next_id += 1
 
         body = MessageBody if isinstance(MessageBody, str) else json.dumps(MessageBody)
@@ -149,7 +154,10 @@ class SQS:
 
     def receive_message(self, QueueUrl, MaxNumberOfMessages=10, **kwargs):  # noqa: N803
         queue = self.queue(QueueUrl)
-        taken, queue.messages = queue.messages[:MaxNumberOfMessages], queue.messages[MaxNumberOfMessages:]
+        taken, queue.messages = (
+            queue.messages[:MaxNumberOfMessages],
+            queue.messages[MaxNumberOfMessages:],
+        )
         queue.received += len(taken)
 
         return {"Messages": taken}
@@ -172,7 +180,9 @@ class ExecutionAlreadyExists(ClientError):
     """Nome de execucao repetido — a camada 1 da idempotencia em acao."""
 
     def __init__(self, name):
-        super().__init__("ExecutionAlreadyExists", "Execution Already Exists: '%s'" % name)
+        super().__init__(
+            "ExecutionAlreadyExists", f"Execution Already Exists: '{name}'"
+        )
         self.name = name
 
 
@@ -199,12 +209,17 @@ class StepFunctions:
             self.rejected += 1
             raise ExecutionAlreadyExists(name)
 
-        execution = self.engine.start(json.loads(input) if isinstance(input, str) else input, name=name)
+        execution = self.engine.start(
+            json.loads(input) if isinstance(input, str) else input, name=name
+        )
 
         self.executions[name] = execution
         self.order.append(name)
 
-        return {"executionArn": "%s:%s" % (self.ARN_PREFIX, name), "startDate": execution.started_at}
+        return {
+            "executionArn": f"{self.ARN_PREFIX}:{name}",
+            "startDate": execution.started_at,
+        }
 
     def counts(self):
         counts = {"SUCCEEDED": 0, "FAILED": 0, "RUNNING": 0}

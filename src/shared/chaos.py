@@ -50,5 +50,5 @@ def maybe_fail(event, default_name=None):
         return
 
     raise TransientFailure(
-        "Falha simulada em %s: tentativa %d de %d." % (state_name, attempt + 1, fails)
+        f"Falha simulada em {state_name}: tentativa {attempt + 1} de {fails}."
     )

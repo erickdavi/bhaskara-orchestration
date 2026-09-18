@@ -77,7 +77,9 @@ def lambda_handler(event, context):
         "cursor": now,
         "queues": queues(),
         "flow": aggregate(fetch_events(since)),
-        "results": results(params.get("batch_id"), integer(params.get("results")) or MAX_RESULTS),
+        "results": results(
+            params.get("batch_id"), integer(params.get("results")) or MAX_RESULTS
+        ),
         "dead_letter": dead_letter(integer(params.get("dlq")) or MAX_DEAD_LETTER),
     }
 
@@ -113,7 +115,9 @@ def aggregate(events):
     states = {}
     executions = {}
 
-    for item in sorted(events, key=lambda e: (e.get("timestamp") or 0, int(e.get("id") or 0))):
+    for item in sorted(
+        events, key=lambda e: (e.get("timestamp") or 0, int(e.get("id") or 0))
+    ):
         kind = item.get("type") or ""
         details = item.get("details") or {}
         name = details.get("name")
@@ -121,21 +125,34 @@ def aggregate(events):
 
         execution = executions.setdefault(
             arn,
-            {"arn": arn, "name": arn.rsplit(":", 1)[-1], "status": "RUNNING", "steps": [], "started_at": None},
+            {
+                "arn": arn,
+                "name": arn.rsplit(":", 1)[-1],
+                "status": "RUNNING",
+                "steps": [],
+                "started_at": None,
+            },
         )
 
         if kind == "ExecutionStarted":
             execution["started_at"] = item.get("timestamp")
             continue
 
-        if kind in ("ExecutionSucceeded", "ExecutionFailed", "ExecutionAborted", "ExecutionTimedOut"):
+        if kind in (
+            "ExecutionSucceeded",
+            "ExecutionFailed",
+            "ExecutionAborted",
+            "ExecutionTimedOut",
+        ):
             execution["status"] = kind.replace("Execution", "").upper()
             execution["stopped_at"] = item.get("timestamp")
             continue
 
         if kind.endswith("StateEntered") and name:
             counters(states, name)["entered"] += 1
-            execution["steps"].append({"state": name, "at": item.get("timestamp"), "outcome": "entered"})
+            execution["steps"].append(
+                {"state": name, "at": item.get("timestamp"), "outcome": "entered"}
+            )
             continue
 
         if kind.endswith("StateExited") and name:
@@ -236,7 +253,8 @@ def summarize(output):
     if isinstance(result, dict):
         if result.get("roots"):
             return "  ".join(
-                "%s=%s" % (root.get("label"), number(root.get("value"))) for root in result["roots"]
+                "{}={}".format(root.get("label"), number(root.get("value")))
+                for root in result["roots"]
             )
 
         return "sem raizes reais"
@@ -244,12 +262,14 @@ def summarize(output):
     delta = payload.get("delta")
 
     if isinstance(delta, dict) and "value" in delta:
-        return "delta = %s" % number(delta["value"])
+        return "delta = {}".format(number(delta["value"]))
 
     validated = payload.get("validated")
 
     if isinstance(validated, dict):
-        return "a=%s b=%s c=%s" % (number(validated["a"]), number(validated["b"]), number(validated["c"]))
+        return "a={} b={} c={}".format(
+            number(validated["a"]), number(validated["b"]), number(validated["c"])
+        )
 
     return None
 
@@ -263,7 +283,7 @@ def number(value):
     except (TypeError, ValueError):
         return str(value)
 
-    return int(value) if value.is_integer() and abs(value) < 2 ** 53 else round(value, 4)
+    return int(value) if value.is_integer() and abs(value) < 2**53 else round(value, 4)
 
 
 def truncate(text, size):
@@ -339,10 +359,17 @@ def queue_depth(url):
     if not url:
         return {"visible": 0, "in_flight": 0}
 
-    attributes = sqs().get_queue_attributes(
-        QueueUrl=url,
-        AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
-    ).get("Attributes", {})
+    attributes = (
+        sqs()
+        .get_queue_attributes(
+            QueueUrl=url,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+            ],
+        )
+        .get("Attributes", {})
+    )
 
     return {
         "visible": int(attributes.get("ApproximateNumberOfMessages", 0)),
@@ -412,7 +439,9 @@ def rejected(message):
 
     return {
         "source": payload.get("source", "redrive"),
-        "equation": payload.get("equation") or (payload.get("meta") or {}).get("raw_body") or body[:120],
+        "equation": payload.get("equation")
+        or (payload.get("meta") or {}).get("raw_body")
+        or body[:120],
         "error": error.get("Error"),
         "cause": truncate(error.get("Cause"), 160),
     }

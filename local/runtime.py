@@ -29,7 +29,9 @@ LOCAL_TABLE = "bhaskara-orchestration-local-results"
 LOCAL_DEAD_LETTER_URL = "local://dead-letter"
 LOCAL_ORDERS_URL = "local://orders"
 
-LOCAL_STATE_MACHINE_ARN = "arn:aws:states:us-east-1:000000000000:stateMachine:bhaskara-local"
+LOCAL_STATE_MACHINE_ARN = (
+    "arn:aws:states:us-east-1:000000000000:stateMachine:bhaskara-local"
+)
 LOCAL_API_KEY = "chave-local-de-demonstracao"
 
 LOCAL_SUBSTITUTIONS = {"dead_letter_url": LOCAL_DEAD_LETTER_URL}
@@ -68,7 +70,7 @@ def load_definition(path=DEFINITION_PATH, substitutions=None):
         text = handle.read()
 
     for name, value in substitutions.items():
-        text = text.replace("${%s}" % name, value)
+        text = text.replace(f"${{{name}}}", value)
 
     return yaml.safe_load(text)
 
@@ -122,7 +124,9 @@ def build_resources(sqs=None):
     # handlers, e um ImportError coletivo esconderia qual deles faltou.
     for placeholder, module_name in HANDLERS.items():
         try:
-            module = __import__("src.handlers.%s.handler" % module_name, fromlist=["handler"])
+            module = __import__(
+                f"src.handlers.{module_name}.handler", fromlist=["handler"]
+            )
         except ImportError:
             continue
 
@@ -162,7 +166,14 @@ def bind_doubles(setter=setattr, sqs=None, dynamodb=None):
     setter(persist, "TABLE_NAME", LOCAL_TABLE)
 
     for module_name, attributes in (
-        ("submit", {"_sqs": sqs, "ORDERS_QUEUE_URL": LOCAL_ORDERS_URL, "API_KEY": LOCAL_API_KEY}),
+        (
+            "submit",
+            {
+                "_sqs": sqs,
+                "ORDERS_QUEUE_URL": LOCAL_ORDERS_URL,
+                "API_KEY": LOCAL_API_KEY,
+            },
+        ),
         (
             "status",
             {
@@ -194,7 +205,7 @@ def bind_doubles(setter=setattr, sqs=None, dynamodb=None):
 
 def handler_module(name):
     try:
-        return __import__("src.handlers.%s.handler" % name, fromlist=["handler"])
+        return __import__(f"src.handlers.{name}.handler", fromlist=["handler"])
     except ImportError:
         return None
 
