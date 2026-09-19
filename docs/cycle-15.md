@@ -165,6 +165,49 @@ entao o Terraform adia a leitura do data source e arrasta a politica junto. O
 ARN de uma funcao nao muda quando a trust policy muda, e o JSON renderizado saiu
 identico.
 
+## O plano que mentia sobre a realidade
+
+Corrigido o assunto do token, o pipeline ficou verde — e o estagio de plano
+mostrou um numero que nao batia:
+
+```text
+local, com credenciais completas    0 to add,  7 to change, 0 to destroy
+runner, com a funcao ci-plan        5 to add,  8 to change, 4 to destroy
+```
+
+As sete mudancas locais sao os sete Lambdas, cujo `source_code_hash` mudou com a
+reformatacao. O runner via, alem disso, a recriacao do bucket do painel e a
+substituicao das suas quatro configuracoes — num bucket que esta no ar e no
+state.
+
+O simulador da IAM respondeu em uma consulta:
+
+```text
+s3:ListBucket                  no bucket do painel    implicitDeny
+s3:GetBucketLocation           allowed
+s3:GetBucketPolicy             allowed
+s3:GetEncryptionConfiguration  allowed
+```
+
+`s3:ListBucket` e a acao por tras do `HeadBucket`, que o provider usa para
+decidir se o bucket existe. Sem ela o refresh leva 403, conclui que o bucket
+sumiu e planeja cria-lo — e as quatro configuracoes, que dependem do nome dele,
+passam a exigir substituicao.
+
+A origem e o proprio ciclo 14. Quando aquele ciclo trocou `s3:*` por uma lista
+enumerada para fechar o furo do bucket de state, ele enumerou os verbos de
+escrita e a leitura de objeto, e deixou de fora a leitura no nivel do bucket.
+`s3:ListAllMyBuckets`, que estava na lista, lista nomes na conta; nao e a mesma
+coisa.
+
+As duas funcoes tinham o buraco, e e a de deploy que importa: no ciclo 16 ela
+teria **aplicado** essa recriacao na infraestrutura viva. A mitigacao escrita no
+ciclo 14 — rodar um apply completo da maquina antes de deixar o pipeline fazer
+sozinho — nao pegaria isto, porque o apply da maquina usa credencial de
+administrador e nunca exercita a politica restrita. A licao e que testar a
+permissao exige assumir a permissao, ou simula-la; rodar com mais poder do que o
+pipeline tem so prova que o codigo funciona para quem nao precisa dele.
+
 ## Criterio de pronto
 
 Cada linha abaixo foi executada, nao presumida:

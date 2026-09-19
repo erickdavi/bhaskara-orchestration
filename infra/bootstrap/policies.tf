@@ -159,6 +159,17 @@ data "aws_iam_policy_document" "plan" {
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.state.arn]
   }
+
+  # O mesmo verbo, no bucket do painel, e pelo mesmo motivo: sem ele o refresh
+  # do plano leva 403 no HeadBucket, conclui que o bucket nao existe e calcula
+  # um plano que recria o que esta no ar. O plano nao aplica nada, mas um plano
+  # que mente sobre a realidade e pior que um plano que falha.
+  statement {
+    sid       = "ListaOBucketDoPainel"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [local.arn_painel]
+  }
 }
 
 resource "aws_iam_role_policy" "plan" {

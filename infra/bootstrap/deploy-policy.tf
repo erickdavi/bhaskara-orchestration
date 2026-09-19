@@ -110,6 +110,13 @@ data "aws_iam_policy_document" "deploy" {
     effect = "Allow"
 
     actions = [
+      # s3:ListBucket e a acao por tras do HeadBucket, que o provider usa para
+      # decidir se o bucket existe. Ela ficou de fora quando este bloco trocou
+      # s3:* por uma lista enumerada, no ciclo 14: os verbos de escrita e a
+      # leitura de objeto foram enumerados, e a leitura no nivel do bucket nao.
+      # Sem ela o refresh leva 403, conclui que o bucket sumiu e planeja
+      # recria-lo, derrubando as quatro configuracoes junto.
+      "s3:ListBucket",
       "s3:CreateBucket",
       "s3:DeleteBucket",
       "s3:PutBucketPolicy",

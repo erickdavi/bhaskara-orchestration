@@ -187,6 +187,11 @@ jobs:
       - name: Calcular o plano
         id: plan
         run: |
+          # O shell padrao do Actions e `bash -e`, sem pipefail: num pipe, o
+          # codigo que sobrevive e o do ultimo comando. Sem esta linha, o `tee`
+          # devolve 0 sempre e o -detailed-exitcode acima vira enfeite — um
+          # plano que falha passaria verde.
+          set -o pipefail
           terraform plan -input=false -no-color -detailed-exitcode \
             | tee "${RUNNER_TEMP}/plan.txt" && codigo=0 || codigo=$?
           echo "codigo=${codigo}" >> "${GITHUB_OUTPUT}"
