@@ -129,6 +129,14 @@ data "aws_iam_policy_document" "deploy" {
       "s3:PutObject",
       "s3:GetObject",
       "s3:DeleteObject",
+
+      # As duas de tag entram pelo mesmo motivo que o ListBucket acima: o
+      # refresh de cada objeto chama GetObjectTagging, e o provider aplica as
+      # default tags do projeto na escrita, o que pede PutObjectTagging. Sem
+      # elas o ciclo 16 pararia no primeiro apply automatizado, repetindo a
+      # descoberta em camadas que este ciclo ja pagou uma vez.
+      "s3:GetObjectTagging",
+      "s3:PutObjectTagging",
     ]
 
     resources = [

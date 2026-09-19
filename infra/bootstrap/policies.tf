@@ -170,6 +170,24 @@ data "aws_iam_policy_document" "plan" {
     actions   = ["s3:ListBucket"]
     resources = [local.arn_painel]
   }
+
+  # Os cinco objetos do painel tambem entram no refresh, um a um. O provider le
+  # cada um com HeadObject, que pede s3:GetObject, e com GetObjectTagging.
+  #
+  # Este buraco estava escondido atras do anterior: enquanto o bucket era lido
+  # como inexistente, os objetos eram calculados como criacao e nunca chegavam a
+  # ser lidos. Consertar a leitura do bucket foi o que revelou a leitura dos
+  # objetos — permissao descoberta em camadas, cada uma so visivel depois que a
+  # de cima sai da frente.
+  #
+  # s3:GetObjectAcl ficou de fora: o bucket usa BucketOwnerEnforced, que desliga
+  # ACL, e nenhum dos objetos declara o atributo. O provider nao chega a pedir.
+  statement {
+    sid       = "LeOsObjetosDoPainel"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:GetObjectTagging"]
+    resources = ["${local.arn_painel}/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "plan" {

@@ -208,6 +208,35 @@ administrador e nunca exercita a politica restrita. A licao e que testar a
 permissao exige assumir a permissao, ou simula-la; rodar com mais poder do que o
 pipeline tem so prova que o codigo funciona para quem nao precisa dele.
 
+## Permissao se descobre em camadas
+
+Concedido o `ListBucket`, o plano do runner passou a dizer
+`0 to add, 7 to change, 0 to destroy` — igual ao local. E entao falhou, com 403
+no `HeadObject` dos cinco objetos do painel.
+
+O segundo buraco estava escondido atras do primeiro. Enquanto o bucket era lido
+como inexistente, os objetos eram calculados como criacao e nunca chegavam a ser
+lidos; nenhuma chamada, nenhum 403. Consertar a leitura do bucket foi o que
+tornou a leitura dos objetos visivel.
+
+Dai a licao do ciclo, que vale alem dele: **uma politica restrita nao se valida
+por tentativa, porque cada negacao esconde a proxima.** O simulador da IAM
+responde a lista inteira de uma vez, sem executar nada — e foi o que se fez
+depois do segundo tropeco, varrendo tambem as leituras dos outros nove servicos
+da stack, todas ja permitidas, e as da funcao de deploy, que estava a caminho do
+mesmo muro no ciclo 16 com `GetObjectTagging` e `PutObjectTagging`.
+
+Esse ultimo ponto e o que mais importa: a falha da funcao de deploy foi
+encontrada **antes** de existir um estagio de deploy, e nao durante ele.
+
+## O pipefail provando o proprio valor
+
+O plano que falhou com 403 reprovou o estagio, com a mensagem
+`O plano falhou com codigo 1`. Na execucao anterior, sem o `set -o pipefail`, o
+mesmo tipo de falha teria sido reportado como "Nenhuma mudanca a aplicar" e o
+estagio passaria verde. O defeito foi corrigido uma execucao antes de ter a
+chance de esconder este.
+
 ## Criterio de pronto
 
 Cada linha abaixo foi executada, nao presumida:
