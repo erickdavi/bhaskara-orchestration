@@ -28,6 +28,25 @@ resource "aws_iam_openid_connect_provider" "github" {
 locals {
   oidc_provider = "token.actions.githubusercontent.com"
 
+  # O assunto do token no formato imutavel.
+  #
+  # Ate 15/07/2026 o GitHub emitia `repo:<dono>/<nome>:<contexto>`. Repositorios
+  # criados depois dessa data usam `repo:<dono>@<id>/<nome>@<id>:<contexto>`, com
+  # o identificador numerico ao lado de cada nome. Este repositorio nasceu em
+  # 03/09/2026 e ja emite o formato novo — uma condicao escrita com os nomes
+  # antigos nao casa com nada, e a AWS recusa com AccessDenied.
+  #
+  # A mudanca nao e burocracia: nome de dono e de repositorio podem ser trocados,
+  # e quem adquirisse o nome antigo herdaria a confianca escrita aqui. O
+  # identificador numerico nao se transfere.
+  #
+  # O prefixo pode ser conferido a qualquer momento:
+  #   gh api repos/<dono>/<nome>/actions/oidc/customization/sub --jq .sub_claim_prefix
+  owner = split("/", var.github_repository)[0]
+  nome  = split("/", var.github_repository)[1]
+
+  subject = "repo:${local.owner}@${var.github_owner_id}/${local.nome}@${var.github_repository_id}"
+
   plan_role_name   = "${var.project_name}-ci-plan"
   deploy_role_name = "${var.project_name}-ci-deploy"
   boundary_name    = "${var.project_name}-ci-boundary"
@@ -59,8 +78,8 @@ data "aws_iam_policy_document" "plan_assume" {
       test     = "StringLike"
       variable = "${local.oidc_provider}:sub"
       values = [
-        "repo:${var.github_repository}:pull_request",
-        "repo:${var.github_repository}:ref:refs/heads/*",
+        "${local.subject}:pull_request",
+        "${local.subject}:ref:refs/heads/*",
       ]
     }
   }
@@ -90,7 +109,7 @@ data "aws_iam_policy_document" "deploy_assume" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_provider}:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/${var.deploy_branch}"]
+      values   = ["${local.subject}:ref:refs/heads/${var.deploy_branch}"]
     }
   }
 }

@@ -16,6 +16,18 @@ variable "github_repository" {
   default     = "erickdavi/bhaskara-orchestration"
 }
 
+variable "github_owner_id" {
+  description = "Identificador numerico do dono do repositorio no GitHub. Obtido com `gh api repos/<dono>/<nome> --jq .owner.id`."
+  type        = number
+  default     = 24820645
+}
+
+variable "github_repository_id" {
+  description = "Identificador numerico do repositorio no GitHub. Obtido com `gh api repos/<dono>/<nome> --jq .id`."
+  type        = number
+  default     = 1356473104
+}
+
 variable "deploy_branch" {
   description = "Unica referencia autorizada a assumir a funcao de deploy. Um push em qualquer outra branch roda os testes e o plano, e nao consegue aplicar."
   type        = string

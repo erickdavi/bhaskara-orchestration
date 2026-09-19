@@ -121,6 +121,50 @@ de confianca do OIDC recebe `AccessDenied` da propria AWS mesmo com o ARN em
 maos. Ele esta nos segredos do repositorio porque e ali que o enunciado pede que
 a configuracao de acesso viva, e porque o custo de trata-lo como segredo e zero.
 
+## O que a primeira execucao encontrou
+
+Qualidade e seguranca passaram na primeira tentativa. O plano falhou no assume
+role, com `Not authorized to perform sts:AssumeRoleWithWebIdentity`, e a causa
+nao estava em nada escrito no ciclo 14.
+
+O GitHub mudou o formato do assunto do token. Ate 15/07/2026 ele emitia
+`repo:<dono>/<nome>:<contexto>`; repositorios criados depois dessa data usam
+*immutable subject claims*, com o identificador numerico ao lado de cada nome:
+
+```text
+o que a trust policy esperava
+  repo:erickdavi/bhaskara-orchestration:ref:refs/heads/*
+
+o que o GitHub emitiu
+  repo:erickdavi@24820645/bhaskara-orchestration@1356473104:ref:refs/heads/main
+```
+
+Este repositorio nasceu em 03/09/2026, do lado novo do corte. Os dos
+checkpoints 1 e 2 sao de agosto e teriam funcionado com a condicao antiga, que e
+por que a armadilha so apareceu agora.
+
+A propria API do GitHub responde qual prefixo vai emitir, o que transforma o
+diagnostico em uma consulta em vez de uma tentativa:
+
+```text
+gh api repos/<dono>/<nome>/actions/oidc/customization/sub --jq .sub_claim_prefix
+→ repo:erickdavi@24820645/bhaskara-orchestration@1356473104
+```
+
+Havia dois caminhos: desligar o formato imutavel no repositorio, e nao tocar na
+AWS, ou levar a trust policy ao formato novo. O segundo foi escolhido porque o
+formato novo e mais seguro do que o que estava escrito: nome de dono e de
+repositorio podem ser trocados, e quem adquirisse o nome antigo herdaria a
+confianca da policy. O identificador numerico nao se transfere. Desligar seria
+optar por sair de uma melhoria de seguranca para nao mexer em duas linhas.
+
+O `terraform plan` do bootstrap mostrou tres mudancas onde se esperavam duas. A
+terceira e cascata: o documento da politica de deploy referencia os ARNs das
+duas funcoes — e o `Deny` que impede o pipeline de mexer nas proprias funcoes —
+entao o Terraform adia a leitura do data source e arrasta a politica junto. O
+ARN de uma funcao nao muda quando a trust policy muda, e o JSON renderizado saiu
+identico.
+
 ## Criterio de pronto
 
 Cada linha abaixo foi executada, nao presumida:
